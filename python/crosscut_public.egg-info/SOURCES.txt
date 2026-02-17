@@ -1,0 +1,9 @@
+pyproject.toml
+crosscut_public.egg-info/PKG-INFO
+crosscut_public.egg-info/SOURCES.txt
+crosscut_public.egg-info/dependency_links.txt
+crosscut_public.egg-info/top_level.txt
+spatial/__init__.py
+spatial/contiguity.py
+spatial/geometry.py
+tests/test_contiguity.py
