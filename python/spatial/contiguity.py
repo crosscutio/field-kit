@@ -96,7 +96,6 @@ def repair_noncontiguous_parts(adj_list, parts, weights, *, verbose=False, max_p
         component (when possible — isolated components with no adjacent
         alternative label are left in place).
     """
-    print(f"[spatial] repair_noncontiguous_parts: {len(parts)} nodes, {len(set(parts))} labels")
     n = len(parts)
     parts = list(parts)
     weights = list(weights)
