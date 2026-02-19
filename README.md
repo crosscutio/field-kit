@@ -1,59 +1,30 @@
-# crosscut-public
+# field-kit
 
-Open-source algorithms for geospatial health campaign planning, extracted from [Crosscut](https://www.crosscut.io/)'s private repositories.
+A collection of tools for geospatial analysts working on health campaign planning. Download country-level geospatial data for offline use, match place names across datasets, and prepare inputs for campaign workflows.
 
-Crosscut digitises mass drug administration (MDA) campaigns for neglected tropical diseases (NTDs). This involves modelling catchment areas, partitioning territory into balanced staff areas, and analysing survey data to recommend assessment protocols. The algorithms that power these workflows are general-purpose and useful beyond Crosscut — this repo makes them available under the MIT licence.
+## Tools
 
-> **Name note:** `crosscut-public` is a placeholder. Rename candidates: *open-terrain*, *cross-section*, *cartograph*. GitHub supports renaming with automatic redirects.
+### [provision](provision/)
 
-## What's included
-
-| Directory | Language | Contents |
-|-----------|----------|----------|
-| [`python/spatial/`](python/spatial/) | Python | Contiguity enforcement for graph-partitioned maps; geometry repair utilities |
-| `python/sppa/` | Python | *(planned)* SPPA decision algorithm for survey protocol recommendations |
-| `js/` | JavaScript | *(placeholder)* Future Node.js extractions |
-| `rust/` | Rust | *(placeholder)* Future Rust extractions |
-
-## Quick start
-
-### Standalone clone
+Gather the geospatial data layers you need before going into the field. Pulls admin boundaries, population rasters, road networks, building footprints, and land use data from public sources into a local directory structure ready for offline analysis.
 
 ```bash
-git clone https://github.com/crosscutio/crosscut-public.git
-cd crosscut-public/python
-pip install -e .
+node provision/gather.js --country BEN --admin-level 2
 ```
 
-### As a git submodule (for private repos)
+### [matchbox](matchbox/)
 
-```bash
-# Add to your repo
-git submodule add https://github.com/crosscutio/crosscut-public.git crosscut-public
-pip install --no-deps -e crosscut-public/python/
+Match place names across GeoJSON datasets using fuzzy name matching and geographic proximity. Take two cartographic datasets that name things differently and reconcile them.
 
-# In Python
-from spatial.contiguity import repair_noncontiguous_parts
-```
+## Getting Started
 
-### Docker (e.g., in an AWS Lambda container)
+Each tool has its own README with setup instructions and usage examples. Pick the tool you need and follow its guide.
 
-```dockerfile
-ADD crosscut-public crosscut-public
-RUN pip install --no-deps -e crosscut-public/python/
-```
+### Prerequisites
 
-## Running tests
-
-```bash
-cd python
-pip install -e .
-pytest tests/ -v
-```
-
-## Module documentation
-
-- [**python/spatial/** — Spatial Partitioning](python/spatial/README.md): contiguity repair after graph partitioning, geometry fixing
+- Node.js 18+
+- Python 3.9+
+- GDAL/OGR command-line tools (`ogr2ogr`)
 
 ## Licence
 

@@ -1,0 +1,16 @@
+node_modules/
+provision/output/*
+!provision/output/.gitkeep
+matchbox/input/*
+!matchbox/input/.gitkeep
+matchbox/output/*
+!matchbox/output/.gitkeep
+*.tif
+*.shp
+*.shx
+*.dbf
+*.prj
+*.gpkg
+*.parquet
+__pycache__/
+.DS_Store

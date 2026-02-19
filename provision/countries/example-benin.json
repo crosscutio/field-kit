@@ -1,0 +1,19 @@
+{
+  "iso": "BEN",
+  "adminLevel": 2,
+  "osm": "africa/benin",
+  "populationYear": 2025,
+
+  "roads": {
+    "url": "https://mapwith.ai/country_exports/BJ_mapwithai_road_data.gpkg.tar.gz"
+  },
+
+  "population": {
+    "worldpop": {
+      "url": "https://data.worldpop.org/GIS/Population/Global_2015_2030/R2025A/2025/BEN/v1/100m/constrained/ben_pop_2025_CN_100m_R2025A_v1.tif"
+    },
+    "kontur": {
+      "url": "https://geodata-eu-central-1-kontur-public.s3.amazonaws.com/kontur_datasets/kontur_population_BJ_20231101.gpkg.gz"
+    }
+  }
+}
