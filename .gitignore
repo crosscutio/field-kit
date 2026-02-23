@@ -1,10 +1,10 @@
 node_modules/
 provision/output/*
 !provision/output/.gitkeep
-matchbox/input/*
-!matchbox/input/.gitkeep
-matchbox/output/*
-!matchbox/output/.gitkeep
+match-bot/input/*
+!match-bot/input/.gitkeep
+match-bot/output/*
+!match-bot/output/.gitkeep
 *.tif
 *.shp
 *.shx

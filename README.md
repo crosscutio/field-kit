@@ -12,7 +12,7 @@ Gather the geospatial data layers you need before going into the field. Pulls ad
 node provision/gather.js --country BEN --admin-level 2
 ```
 
-### [matchbox](matchbox/)
+### [match-bot](match-bot/)
 
 Match place names across GeoJSON datasets using fuzzy name matching and geographic proximity. Take two cartographic datasets that name things differently and reconcile them.
 
