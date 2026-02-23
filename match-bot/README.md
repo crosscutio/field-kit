@@ -1,6 +1,8 @@
 # Match-Bot
 
-A configurable tool for matching named places across geospatial datasets. It uses Levenshtein distance, Soundex similarity, and the Hungarian algorithm for optimal one-to-one assignment, organized by an N-level administrative hierarchy.
+If you're working with geospatial datasets from different sources, you'll find that the same villages, districts, and health facilities are often named differently across datasets. Match-bot reconciles them.
+
+It uses Levenshtein distance, Soundex similarity, and the Hungarian algorithm for optimal one-to-one assignment, organized by an N-level administrative hierarchy.
 
 ## How It Works
 

@@ -1,6 +1,8 @@
 # Provision
 
-Gather the geospatial data layers you need before going into the field. Pulls from public data sources into a local directory structure ready for offline analysis.
+Our team uses this tool regularly when pre-processing data across multiple country boundaries for health campaign planning. If you do similar geospatial pre-processing work — gathering admin boundaries, population data, road networks, building footprints, and land use data from public sources — provision can save you the effort of downloading from each source individually.
+
+One command, one country ISO code — provision pulls from GeoBoundaries, WorldPop, Meta HRSL, Geofabrik, Overture Maps, and ESA into an organized local directory.
 
 ## What it downloads
 
@@ -25,7 +27,7 @@ Gather the geospatial data layers you need before going into the field. Pulls fr
 1. Install dependencies:
 
 ```bash
-cd gather-data
+cd provision
 npm install
 ```
 
@@ -120,3 +122,7 @@ ESA land cover classification data.
 
 - **Overture Maps**: Aggregated building footprints (requires Python + DuckDB)
 - **OSM buildings**: Extracted from OpenStreetMap data
+
+## Importing into other projects
+
+Provision's fetch modules are designed to be importable by other codebases. For example, a build pipeline like grounds-keeper's `gather-raw-data-locally.js` could require provision's modules directly instead of maintaining its own download logic. This isn't implemented yet but is a design goal — if you're building tooling that needs to download from these same sources, consider importing from provision rather than duplicating the fetch logic.

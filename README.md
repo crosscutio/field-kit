@@ -1,12 +1,12 @@
 # field-kit
 
-A collection of tools for geospatial analysts working on health campaign planning. Download country-level geospatial data for offline use, match place names across datasets, and prepare inputs for campaign workflows.
+Our team uses these tools regularly when pre-processing geospatial data across multiple country boundaries for health campaign planning (NTDs, MDA, and similar programs). If you do similar work — gathering public geospatial datasets and reconciling place names across sources — field-kit may be useful to you too.
 
 ## Tools
 
 ### [provision](provision/)
 
-Gather the geospatial data layers you need before going into the field. Pulls admin boundaries, population rasters, road networks, building footprints, and land use data from public sources into a local directory structure ready for offline analysis.
+You need admin boundaries, population data, roads, buildings, and land use before going into the field — but these come from 6+ different sources, each with different formats and download methods. Provision downloads everything for a given country with one command.
 
 ```bash
 node provision/gather.js --country BEN --admin-level 2
@@ -14,7 +14,7 @@ node provision/gather.js --country BEN --admin-level 2
 
 ### [match-bot](match-bot/)
 
-Match place names across geospatial datasets using fuzzy name matching and geographic proximity. Take two cartographic datasets that name things differently and reconcile them.
+Geospatial datasets from different sources almost always name the same villages, districts, and health facilities differently. Match-bot reconciles them using fuzzy name matching and optimal one-to-one assignment, organized by administrative hierarchy.
 
 ```bash
 cd match-bot
