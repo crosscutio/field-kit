@@ -13,4 +13,5 @@ match-bot/output/*
 *.gpkg
 *.parquet
 __pycache__/
+*.egg-info/
 .DS_Store

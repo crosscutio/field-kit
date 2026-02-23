@@ -14,7 +14,12 @@ node provision/gather.js --country BEN --admin-level 2
 
 ### [match-bot](match-bot/)
 
-Match place names across GeoJSON datasets using fuzzy name matching and geographic proximity. Take two cartographic datasets that name things differently and reconcile them.
+Match place names across geospatial datasets using fuzzy name matching and geographic proximity. Take two cartographic datasets that name things differently and reconcile them.
+
+```bash
+cd match-bot
+python -m match_bot match --config config.yaml
+```
 
 ## Getting Started
 

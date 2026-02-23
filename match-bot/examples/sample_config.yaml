@@ -1,0 +1,60 @@
+# Match-Bot — Sample Configuration
+#
+# This config matches a CSV of named communities (reference) against
+# a shapefile of administrative boundaries (target).
+
+project_name: "My Matching Project"
+
+# ──────────────────────────────────────────────
+# Reference dataset — the list of named units
+# ──────────────────────────────────────────────
+reference:
+  file: "input/reference_data.csv"   # Path relative to this config file
+  # format: csv                      # Optional: csv (default for .csv extension)
+  # layer: null                      # Only needed for multi-layer formats (gpkg, gdb)
+  columns:
+    id: Community_ID                 # Unique identifier column
+    name: Community                  # Name column to match on
+    hierarchy:                       # Ordered broadest → narrowest
+      - column: Admin_1             # Column name in the file
+        label: province             # Semantic label (must match target labels)
+      - column: Admin_2
+        label: district
+
+# ──────────────────────────────────────────────
+# Target dataset — the GIS data to match against
+# ──────────────────────────────────────────────
+target:
+  file: "input/boundaries.shp"      # Shapefile, geopackage, or CSV
+  format: shp                        # csv, shp, gpkg, gdb
+  layer: null                        # Layer name for gpkg/gdb
+  columns:
+    id: ADM3_ID                     # Unique identifier column
+    name: ADM3_NAME                 # Name column to match on
+    hierarchy:
+      - column: ADM1_NAME
+        label: province             # Labels tie the two datasets together
+      - column: ADM2_NAME
+        label: district
+
+# ──────────────────────────────────────────────
+# Text standardization
+# ──────────────────────────────────────────────
+standardization:
+  case: lower                        # upper, lower, title, or null (no change)
+  remove_accents: true               # Convert é→e, ñ→n, etc.
+
+# ──────────────────────────────────────────────
+# Matching algorithm parameters
+# ──────────────────────────────────────────────
+matching:
+  levenshtein_distance_threshold: 1  # Step 2: accept if edit distance ≤ this
+  levenshtein_score_threshold: 0.25  # Step 3: accept if distance/length < this
+  validate_numbers: true             # Reject "Village 1" ↔ "Village 2"
+
+# ──────────────────────────────────────────────
+# Output paths (relative to this config file)
+# ──────────────────────────────────────────────
+paths:
+  lookups_dir: output/lookups        # Lookup tables (source of truth)
+  output_dir: output                 # Match results, reports

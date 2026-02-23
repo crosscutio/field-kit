@@ -1,0 +1,11 @@
+pyyaml>=5.0
+jellyfish>=0.9
+scipy>=1.7
+pandas>=1.3
+
+# Optional: for spatial file formats (SHP, GPKG, GDB)
+# geopandas>=0.10
+# fiona>=1.8
+
+# Optional: for match suggestions
+# rapidfuzz>=2.0
