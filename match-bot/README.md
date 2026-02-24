@@ -17,14 +17,42 @@ At each step, the Hungarian algorithm ensures globally optimal one-to-one assign
 
 ## Quick Start
 
-### Install dependencies
+### Prerequisites
+
+- Python 3.9+
+
+### Install
 
 ```bash
 cd match-bot
+pip install .
+```
+
+Or install with all optional dependencies:
+
+```bash
+pip install ".[all]"
+```
+
+Or install from requirements.txt:
+
+```bash
 pip install -r requirements.txt
 ```
 
-### Create a config
+### Try the demo
+
+A complete demo with synthetic West African health facility data is included:
+
+```bash
+python -m match_bot match --config examples/demo/config.yaml
+python -m match_bot lookups --config examples/demo/config.yaml
+python -m match_bot suggest --config examples/demo/config.yaml --threshold 70
+```
+
+This demonstrates exact matches, fuzzy matches, unmatched records, and suggestions. Check `examples/demo/output/` for results.
+
+### Use with your own data
 
 ```bash
 cp examples/sample_config.yaml config.yaml
@@ -57,6 +85,8 @@ This creates `output/lookups/leaf_lookup.csv` — the single source of truth for
 ```bash
 python -m match_bot suggest --config config.yaml --threshold 70
 ```
+
+Requires `rapidfuzz` (`pip install ".[suggest]"`).
 
 ## Configuration
 
@@ -156,30 +186,25 @@ Match-Bot includes Claude Code skills for an interactive workflow. When running 
 - **"Update the lookup with suggestions 1 and 3"** — applies manual matches to the CSV
 - **"Generate the report"** — creates a Markdown summary
 
-## Prerequisites
-
-- Python 3.9+
-
-Required:
-```
-pip install pyyaml jellyfish scipy pandas
-```
-
-Optional (for spatial file formats):
-```
-pip install geopandas fiona
-```
-
-Optional (for match suggestions):
-```
-pip install rapidfuzz
-```
-
 ## Supported Input Formats
 
 - CSV
-- Shapefile (.shp)
-- GeoPackage (.gpkg)
-- File Geodatabase (.gdb)
+- Shapefile (.shp) — requires `geopandas` and `fiona` (`pip install ".[spatial]"`)
+- GeoPackage (.gpkg) — requires `geopandas` and `fiona`
+- File Geodatabase (.gdb) — requires `geopandas` and `fiona`
 
 Geometry columns are dropped — only attribute data is used for matching.
+
+## Troubleshooting
+
+**`ModuleNotFoundError: No module named 'yaml'`** — Install pyyaml: `pip install pyyaml` or `pip install .`
+
+**`Column 'X' not found`** — Check that the column names in your config match the actual column names in your data files. Column names are case-sensitive.
+
+**`Hierarchy labels must match`** — The `label` values in `reference.hierarchy` must match those in `target.hierarchy` (same labels, same order).
+
+**`rapidfuzz is required for match suggestions`** — Install with `pip install rapidfuzz` or `pip install ".[suggest]"`.
+
+**Low match rate** — Try increasing `levenshtein_distance_threshold` (e.g., 2) or `levenshtein_score_threshold` (e.g., 0.35). Check hierarchy-level lookups for mismatched parent names that prevent leaf matching.
+
+**`No such file or directory`** — File paths in the config are relative to the config file's directory. Use absolute paths if needed.

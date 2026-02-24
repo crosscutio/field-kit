@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "match-bot"
+version = "0.1.0"
+description = "Fuzzy matching tool for reconciling named places across datasets"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.9"
+dependencies = [
+    "pyyaml>=6.0",
+    "jellyfish>=1.0",
+    "scipy>=1.10",
+    "pandas>=2.0",
+]
+
+[project.optional-dependencies]
+spatial = ["geopandas>=0.14", "fiona>=1.9"]
+suggest = ["rapidfuzz>=3.0"]
+all = ["match-bot[spatial,suggest]"]
+
+[project.scripts]
+match-bot = "match_bot.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["match_bot*"]

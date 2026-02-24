@@ -5,6 +5,7 @@ match-bot/input/*
 !match-bot/input/.gitkeep
 match-bot/output/*
 !match-bot/output/.gitkeep
+match-bot/examples/demo/output/
 *.tif
 *.shp
 *.shx
@@ -14,4 +15,6 @@ match-bot/output/*
 *.parquet
 __pycache__/
 *.egg-info/
+build/
+dist/
 .DS_Store

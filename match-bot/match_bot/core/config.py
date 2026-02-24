@@ -153,8 +153,16 @@ class MatcherConfig:
         import yaml
 
         config_path = Path(path)
-        with open(config_path, 'r', encoding='utf-8') as f:
-            raw = yaml.safe_load(f)
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                raw = yaml.safe_load(f)
+        except FileNotFoundError:
+            raise FileNotFoundError(f"Config file not found: {config_path}")
+        except yaml.YAMLError as e:
+            raise ValueError(f"Invalid YAML in {config_path}: {e}")
+
+        if not isinstance(raw, dict):
+            raise ValueError(f"Config file must contain a YAML mapping, got {type(raw).__name__}")
 
         config = cls._from_dict(raw)
         config._config_dir = config_path.parent

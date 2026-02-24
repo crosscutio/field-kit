@@ -98,7 +98,10 @@ def main():
     print(f"  Wrote {len(leaf_lookup)} entries to {existing_leaf_path}")
 
     # Print summary
-    matched_count = len(leaf_lookup[leaf_lookup.get('unmatched', pd.Series()) != 'x']) if 'unmatched' in leaf_lookup.columns else len(leaf_lookup)
+    if 'unmatched' in leaf_lookup.columns:
+        matched_count = len(leaf_lookup[leaf_lookup['unmatched'] != 'x'])
+    else:
+        matched_count = len(leaf_lookup)
     print(f"\nLookup Summary:")
     print(f"  Total entries: {len(leaf_lookup)}")
     print(f"  Matched:       {matched_count}")

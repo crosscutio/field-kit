@@ -1,0 +1,41 @@
+# Demo — West African Health Facilities (Togo)
+#
+# Matches community names from a reference list against target health
+# facility records. Demonstrates exact, fuzzy, and unmatched results.
+
+project_name: "Demo — West African Health Facilities"
+
+reference:
+  file: "reference.csv"
+  columns:
+    id: Community_ID
+    name: Community
+    hierarchy:
+      - column: Province
+        label: province
+      - column: District
+        label: district
+
+target:
+  file: "target.csv"
+  columns:
+    id: Facility_ID
+    name: Facility_Name
+    hierarchy:
+      - column: ADM1
+        label: province
+      - column: ADM2
+        label: district
+
+standardization:
+  case: lower
+  remove_accents: true
+
+matching:
+  levenshtein_distance_threshold: 1
+  levenshtein_score_threshold: 0.25
+  validate_numbers: true
+
+paths:
+  lookups_dir: output/lookups
+  output_dir: output

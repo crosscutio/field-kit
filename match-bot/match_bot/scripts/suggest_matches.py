@@ -144,7 +144,7 @@ def _suggest_leaf_matches(config, lookups_dir, labels, fuzz, threshold):
     print(f"Found {len(suggestions)} potential matches:\n")
     for s in suggestions:
         parent_str = ' > '.join(f"{k}={v}" for k, v in s['parents'].items())
-        print(f"  [{s['score']:3d}] {s['target_name']!r} → {s['ref_name']!r}")
+        print(f"  [{s['score']:3.0f}] {s['target_name']!r} → {s['ref_name']!r}")
         if parent_str:
             print(f"        ({parent_str})")
         print(f"        target_id={s['target_id']}, ref_id={s['ref_id']}")
@@ -203,7 +203,7 @@ def _suggest_hierarchy_matches(config, lookups_dir, level, fuzz, threshold):
     suggestions.sort(key=lambda x: x['score'], reverse=True)
     print(f"Found {len(suggestions)} potential {level} matches:\n")
     for s in suggestions:
-        print(f"  [{s['score']:3d}] {s['target_name']!r} → {s['ref_name']!r}")
+        print(f"  [{s['score']:3.0f}] {s['target_name']!r} → {s['ref_name']!r}")
 
 
 if __name__ == '__main__':
