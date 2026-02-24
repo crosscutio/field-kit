@@ -1,54 +1,138 @@
 /**
  * Download building footprint data from Overture Maps and OpenStreetMap.
  *
- * Sources:
- *   - Overture Maps (aggregated footprints, downloaded via overturemaps CLI + DuckDB)
- *   - OSM buildings (extracted from Geofabrik shapefiles)
- *
- * Requires: Python 3.9+ with overturemaps, geopandas, duckdb packages
+ * @param {object} opts
+ * @param {string} opts.outputDir - Directory to write building files
+ * @param {string} opts.admin0Path - Path to admin0.geojson (for Overture bbox + filter)
+ * @param {string} opts.osmDir - Path to OSM shapefiles directory (for OSM buildings)
+ * @param {boolean} [opts.overture=true] - Whether to fetch Overture buildings
+ * @param {boolean} [opts.osm=true] - Whether to fetch OSM buildings
  *
  * Output:
- *   {outputDir}/buildings/overture-buildings.parquet
- *   {outputDir}/buildings/osm-buildings.csv
+ *   {outputDir}/overture-buildings.parquet
+ *   {outputDir}/osm-buildings.csv
  */
 
 const fs = require("fs");
 const path = require("path");
+const { execSync } = require("child_process");
+const { ensureDir } = require("./utils");
 
-module.exports = async function fetchBuildings(config, outputDir) {
-  const buildingsDir = path.join(outputDir, "buildings");
-  fs.mkdirSync(buildingsDir, { recursive: true });
+module.exports = async function fetchBuildings({ outputDir, admin0Path, osmDir, overture = true, osm = true }) {
+  ensureDir(outputDir);
 
-  // --- Overture Maps ---
-  if (config.sources.buildings?.overture?.enabled !== false) {
-    await fetchOverture(config, buildingsDir);
+  if (overture) {
+    try {
+      await fetchOverture(outputDir, admin0Path);
+    } catch (err) {
+      console.error(`    Overture buildings failed: ${err.message}`);
+    }
   }
 
-  // --- OSM Buildings ---
-  if (config.sources.buildings?.osm?.enabled !== false) {
-    await fetchOSMBuildings(config, buildingsDir, outputDir);
+  if (osm) {
+    try {
+      await fetchOSMBuildings(outputDir, osmDir);
+    } catch (err) {
+      console.error(`    OSM buildings failed: ${err.message}`);
+    }
   }
 };
 
-async function fetchOverture(config, buildingsDir) {
-  console.log("  Overture Maps buildings...");
+async function fetchOverture(outputDir, admin0Path) {
+  console.log("    Overture Maps buildings...");
 
-  // TODO: Extract from grounds-keeper lib/push-overture-buildings.js
-  // Uses two Python scripts:
-  // 1. download-overture-buildings.py — uses overturemaps CLI to download
-  //    buildings within the country's bounding box, then filters by admin-0
-  //    boundary using DuckDB spatial queries
-  // 2. Saves as {buildingsDir}/overture-buildings.parquet
-  //
-  // Python dependencies: overturemaps, geopandas, pyarrow, duckdb
+  const outPath = path.join(outputDir, "overture-buildings.parquet");
+  if (fs.existsSync(outPath)) {
+    console.log("    Already exists: overture-buildings.parquet");
+    return;
+  }
+
+  if (!admin0Path || !fs.existsSync(admin0Path)) {
+    console.log("    Skipping Overture — admin0.geojson not found (run boundary step first)");
+    return;
+  }
+
+  const admin0 = JSON.parse(fs.readFileSync(admin0Path, "utf-8"));
+
+  // Calculate bounding box from admin0 features
+  let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
+  for (const feature of admin0.features) {
+    const coords = getAllCoords(feature.geometry);
+    for (const [x, y] of coords) {
+      if (x < minx) minx = x;
+      if (y < miny) miny = y;
+      if (x > maxx) maxx = x;
+      if (y > maxy) maxy = y;
+    }
+  }
+
+  const scriptPath = path.join(__dirname, "..", "scripts", "download-overture-buildings.py");
+  if (!fs.existsSync(scriptPath)) {
+    throw new Error(`Python script not found: ${scriptPath}`);
+  }
+
+  const cmd = `python3 "${scriptPath}" ${minx} ${miny} ${maxx} ${maxy} "${outPath}" "${admin0Path}"`;
+  console.log(`    Running: ${cmd}`);
+  execSync(cmd, { stdio: "inherit" });
+
+  if (fs.existsSync(outPath)) {
+    const stats = fs.statSync(outPath);
+    console.log(`    Saved: ${outPath} (${(stats.size / 1024 / 1024).toFixed(2)} MB)`);
+  }
 }
 
-async function fetchOSMBuildings(config, buildingsDir, outputDir) {
-  console.log("  OSM buildings...");
+async function fetchOSMBuildings(outputDir, osmDir) {
+  console.log("    OSM buildings...");
 
-  // TODO: Extract from grounds-keeper lib/push-osm-buildings.js
-  // 1. Extract building polygons from the OSM shapefiles (already downloaded
-  //    in fetch-osm step — look in {outputDir}/osm/)
-  // 2. Filter to building features
-  // 3. Save as {buildingsDir}/osm-buildings.csv
+  const outPath = path.join(outputDir, "osm-buildings.csv");
+  if (fs.existsSync(outPath)) {
+    console.log("    Already exists: osm-buildings.csv");
+    return;
+  }
+
+  if (!osmDir || !fs.existsSync(osmDir)) {
+    console.log("    Skipping OSM buildings — OSM directory not found (run osm step first)");
+    return;
+  }
+
+  const buildingsShp = findFile(osmDir, "gis_osm_buildings_a_free_1.shp");
+  if (!buildingsShp) {
+    console.log("    Skipping OSM buildings — gis_osm_buildings_a_free_1.shp not found");
+    return;
+  }
+
+  console.log("    Converting OSM buildings shapefile to CSV...");
+  execSync(
+    `ogr2ogr -f CSV "${outPath}" "${buildingsShp}"`,
+    { stdio: "pipe" }
+  );
+
+  if (fs.existsSync(outPath)) {
+    console.log(`    Saved: ${outPath}`);
+  }
+}
+
+function findFile(dir, fileName) {
+  if (!fs.existsSync(dir)) return null;
+  const entries = fs.readdirSync(dir);
+  for (const entry of entries) {
+    if (entry === fileName) {
+      return path.join(dir, entry);
+    }
+  }
+  return null;
+}
+
+function getAllCoords(geometry) {
+  if (!geometry) return [];
+  const coords = [];
+  function walk(arr) {
+    if (typeof arr[0] === "number") {
+      coords.push(arr);
+    } else {
+      for (const item of arr) walk(item);
+    }
+  }
+  walk(geometry.coordinates);
+  return coords;
 }

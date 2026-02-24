@@ -1,29 +1,25 @@
 /**
  * Download land use / land cover classification data.
  *
- * Source: ESA Africa Land Cover (or Planetary Computer)
+ * @param {object} opts
+ * @param {string} opts.outputDir - Directory to write landuse file
+ * @param {string} opts.url - URL to the GeoTIFF file
  *
  * Output:
- *   {outputDir}/land-use/landuse.tif
+ *   {outputDir}/landuse.tif
  */
 
-const fs = require("fs");
 const path = require("path");
+const { downloadToFile, ensureDir } = require("./utils");
 
-module.exports = async function fetchLandUse(config, outputDir) {
-  const landUseDir = path.join(outputDir, "land-use");
-  fs.mkdirSync(landUseDir, { recursive: true });
+module.exports = async function fetchLandUse({ outputDir, url }) {
+  ensureDir(outputDir);
 
-  const url = config.sources.landuse?.url;
-  if (!url) {
-    console.log("  Skipping land use — no URL configured");
-    return;
+  const outPath = path.join(outputDir, "landuse.tif");
+  console.log(`    Land use: ${url}`);
+
+  const downloaded = await downloadToFile(url, outPath);
+  if (downloaded) {
+    console.log(`    Saved: ${outPath}`);
   }
-
-  console.log(`  Land use: ${url}`);
-
-  // TODO: Extract from grounds-keeper lib/push-land-use.js
-  // 1. Download the GeoTIFF
-  // 2. Optionally clip to country boundary for smaller file size
-  // 3. Save to {landUseDir}/landuse.tif
 };

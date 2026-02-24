@@ -2,23 +2,7 @@
   "outputDir": "./output",
 
   "sources": {
-    "boundary": {
-      "url": "https://www.geoboundaries.org/api/current/gbOpen/{ISO}/ADM{LEVEL}",
-      "enabled": true
-    },
-    "osm": {
-      "baseUrl": "https://download.geofabrik.de",
-      "enabled": true
-    },
-    "roads": {
-      "url": "https://mapwith.ai/country_exports/{ISO2}_mapwithai_road_data.gpkg.tar.gz",
-      "enabled": true
-    },
     "population": {
-      "worldpop": {
-        "url": "https://data.worldpop.org/GIS/Population/Global_2015_2030/R2025A/{YEAR}/{ISO}/v1/100m/constrained/{iso}_pop_{YEAR}_CN_100m_R2025A_v1.tif",
-        "enabled": true
-      },
       "hrsl": {
         "layers": {
           "total": "https://dataforgood-fb-data.s3.amazonaws.com/hrsl-cogs/hrsl_general/hrsl_general-latest.vrt",
@@ -28,31 +12,13 @@
           "women": "https://dataforgood-fb-data.s3.amazonaws.com/hrsl-cogs/hrsl_women/hrsl_women-latest.vrt",
           "women-15-to-49": "https://dataforgood-fb-data.s3.amazonaws.com/hrsl-cogs/hrsl_women_of_reproductive_age_15_49/hrsl_women_of_reproductive_age_15_49-latest.vrt",
           "youth-15-to-24": "https://dataforgood-fb-data.s3.amazonaws.com/hrsl-cogs/hrsl_youth_15_24/hrsl_youth_15_24-latest.vrt"
-        },
-        "enabled": true
-      },
-      "kontur": {
-        "url": "https://geodata-eu-central-1-kontur-public.s3.amazonaws.com/kontur_datasets/kontur_population_{ISO2}_{DATE}.gpkg.gz",
-        "enabled": true
-      }
-    },
-    "landuse": {
-      "url": "https://2016africalandcover20m.esrin.esa.int/download.php",
-      "enabled": true
-    },
-    "buildings": {
-      "overture": {
-        "enabled": true
-      },
-      "osm": {
-        "enabled": true
+        }
       }
     }
   },
 
   "defaults": {
     "adminLevel": 2,
-    "populationYear": 2025,
-    "hexSize": 0.0078125
+    "populationYear": 2025
   }
 }

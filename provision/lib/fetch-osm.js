@@ -2,29 +2,52 @@
  * Download OpenStreetMap data from Geofabrik.
  *
  * Source: https://download.geofabrik.de/
- * Requires the OSM region slug (e.g. "africa/benin") in the country config.
+ *
+ * @param {object} opts
+ * @param {string} opts.outputDir - Directory to write shapefiles
+ * @param {string} opts.url - Full Geofabrik ZIP URL
  *
  * Output:
- *   {outputDir}/osm/*.shp (and associated .shx, .dbf, .prj files)
+ *   {outputDir}/*.shp (and associated .shx, .dbf, .prj files)
  */
 
 const fs = require("fs");
 const path = require("path");
+const got = require("got");
+const unzipper = require("unzipper");
+const { ensureDir } = require("./utils");
 
-module.exports = async function fetchOSM(config, outputDir) {
-  if (!config.osm) {
-    console.log("  Skipping OSM — no 'osm' region slug in country config");
+module.exports = async function fetchOSM({ outputDir, url }) {
+  ensureDir(outputDir);
+
+  // Check for a marker file that indicates extraction is complete
+  const markerPath = path.join(outputDir, ".complete");
+  if (fs.existsSync(markerPath)) {
+    console.log("    Already exists: OSM shapefiles");
     return;
   }
 
-  const osmDir = path.join(outputDir, "osm");
-  fs.mkdirSync(osmDir, { recursive: true });
+  console.log(`    Downloading OSM data: ${url}`);
 
-  const url = `https://download.geofabrik.de/${config.osm}-latest-free.shp.zip`;
-  console.log(`  Downloading OSM data: ${url}`);
+  const zip = got.stream(url).pipe(unzipper.Parse({ forceStream: true }));
 
-  // TODO: Extract from grounds-keeper lib/push-osm.js
-  // 1. Download the shapefile ZIP from Geofabrik
-  // 2. Extract to {osmDir}/
-  // 3. The ZIP contains multiple shapefiles (roads, waterways, places, etc.)
+  for await (const entry of zip) {
+    if (entry.type === "Directory") {
+      entry.autodrain();
+      continue;
+    }
+    const fileName = path.basename(entry.path);
+    const outPath = path.join(outputDir, fileName);
+    console.log(`    Extracting: ${fileName}`);
+    await new Promise((resolve, reject) => {
+      const ws = fs.createWriteStream(outPath);
+      entry.pipe(ws);
+      ws.on("finish", resolve);
+      ws.on("error", reject);
+    });
+  }
+
+  // Write marker file
+  fs.writeFileSync(markerPath, new Date().toISOString());
+  console.log(`    Extracted to: ${outputDir}`);
 };

@@ -19,15 +19,6 @@ const fetchPopulation = require("./lib/fetch-population");
 const fetchLandUse = require("./lib/fetch-land-use");
 const fetchBuildings = require("./lib/fetch-buildings");
 
-const STEPS = {
-  boundary: { fn: fetchBoundaries, label: "Admin boundaries" },
-  osm: { fn: fetchOSM, label: "OpenStreetMap data" },
-  roads: { fn: fetchRoads, label: "Road networks" },
-  population: { fn: fetchPopulation, label: "Population rasters" },
-  landuse: { fn: fetchLandUse, label: "Land use data" },
-  buildings: { fn: fetchBuildings, label: "Building footprints" },
-};
-
 function parseArgs() {
   const args = process.argv.slice(2);
   const parsed = {};
@@ -89,33 +80,85 @@ function loadConfig(args) {
     );
   }
 
-  // Merge: CLI args > country config > defaults
-  return {
-    iso: args.country,
-    adminLevel: args.adminLevel || countryConfig.adminLevel || defaults.defaults.adminLevel,
-    outputDir: args.outputDir || defaults.outputDir,
-    populationYear: countryConfig.populationYear || defaults.defaults.populationYear,
-    osm: countryConfig.osm || null,
-    sources: deepMerge(defaults.sources, countryConfig),
-  };
+  const iso = args.country;
+  const isoLower = iso.toLowerCase();
+  const adminLevel = args.adminLevel || countryConfig.adminLevel || defaults.defaults.adminLevel;
+  const outputDir = args.outputDir || defaults.outputDir;
+  const populationYear = countryConfig.populationYear || defaults.defaults.populationYear;
+
+  return { iso, isoLower, adminLevel, outputDir, populationYear, countryConfig, defaults };
 }
 
-function deepMerge(target, source) {
-  const result = { ...target };
-  for (const key of Object.keys(source)) {
-    if (
-      source[key] &&
-      typeof source[key] === "object" &&
-      !Array.isArray(source[key]) &&
-      target[key] &&
-      typeof target[key] === "object"
-    ) {
-      result[key] = deepMerge(target[key], source[key]);
-    } else if (key !== "iso" && key !== "adminLevel" && key !== "osm" && key !== "populationYear") {
-      result[key] = source[key];
-    }
-  }
-  return result;
+/**
+ * Build the flat options object for each step.
+ * All URL construction happens here — modules just receive resolved values.
+ */
+function buildSteps(config, outputBase) {
+  const { iso, isoLower, adminLevel, populationYear, countryConfig, defaults } = config;
+  const hrslLayers = defaults.sources.population.hrsl.layers;
+
+  return {
+    boundary: {
+      label: "Admin boundaries",
+      fn: fetchBoundaries,
+      opts: {
+        outputDir: path.join(outputBase, "boundary"),
+        iso,
+        adminLevel,
+      },
+    },
+    osm: {
+      label: "OpenStreetMap data",
+      skip: !countryConfig.osm ? "no 'osm' region slug in country config" : null,
+      fn: fetchOSM,
+      opts: {
+        outputDir: path.join(outputBase, "osm"),
+        url: countryConfig.osm
+          ? `https://download.geofabrik.de/${countryConfig.osm}-latest-free.shp.zip`
+          : null,
+      },
+    },
+    roads: {
+      label: "Road networks",
+      skip: !countryConfig.roads?.url ? "no roads URL in country config" : null,
+      fn: fetchRoads,
+      opts: {
+        outputDir: path.join(outputBase, "roads"),
+        url: countryConfig.roads?.url || null,
+      },
+    },
+    population: {
+      label: "Population rasters",
+      fn: fetchPopulation,
+      opts: {
+        outputDir: path.join(outputBase, "population"),
+        worldpopUrl: countryConfig.population?.worldpop?.url ||
+          `https://data.worldpop.org/GIS/Population/Global_2015_2030/R2025A/${populationYear}/${iso}/v1/100m/constrained/${isoLower}_pop_${populationYear}_CN_100m_R2025A_v1.tif`,
+        hrslLayers,
+        konturUrl: countryConfig.population?.kontur?.url || null,
+      },
+    },
+    landuse: {
+      label: "Land use data",
+      skip: !countryConfig.landuse?.url ? "no land use URL in country config" : null,
+      fn: fetchLandUse,
+      opts: {
+        outputDir: path.join(outputBase, "land-use"),
+        url: countryConfig.landuse?.url || null,
+      },
+    },
+    buildings: {
+      label: "Building footprints",
+      fn: fetchBuildings,
+      opts: {
+        outputDir: path.join(outputBase, "buildings"),
+        admin0Path: path.join(outputBase, "boundary", "admin0.geojson"),
+        osmDir: path.join(outputBase, "osm"),
+        overture: countryConfig.buildings?.overture?.enabled !== false,
+        osm: countryConfig.buildings?.osm?.enabled !== false,
+      },
+    },
+  };
 }
 
 async function main() {
@@ -134,21 +177,22 @@ async function main() {
 
   fs.mkdirSync(outputBase, { recursive: true });
 
+  const steps = buildSteps(config, outputBase);
+
   // Determine which steps to run
   const stepsToRun = args.only
-    ? Object.entries(STEPS).filter(([key]) => args.only.includes(key))
-    : Object.entries(STEPS);
+    ? Object.entries(steps).filter(([key]) => args.only.includes(key))
+    : Object.entries(steps);
 
   for (const [key, step] of stepsToRun) {
-    const sourceConfig = config.sources[key];
-    if (sourceConfig && sourceConfig.enabled === false) {
-      console.log(`⊘ Skipping ${step.label} (disabled in config)`);
+    if (step.skip) {
+      console.log(`⊘ Skipping ${step.label} (${step.skip})`);
       continue;
     }
 
     console.log(`→ ${step.label}...`);
     try {
-      await step.fn(config, outputBase);
+      await step.fn(step.opts);
       console.log(`  ✓ ${step.label} done\n`);
     } catch (err) {
       console.error(`  ✗ ${step.label} failed: ${err.message}\n`);
