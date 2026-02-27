@@ -1,6 +1,6 @@
 # field-kit
 
-Our team uses these tools regularly when pre-processing geospatial data across multiple country boundaries for health planning (ex: NTD, Malaria, IMmunization). If you do similar work — gathering public geospatial datasets and reconciling place names across sources — field-kit may be useful to you too.
+Our team uses these tools regularly when pre-processing geospatial data across multiple country boundaries for health planning (ex: NTD, Malaria, Immunization). If you do similar work — gathering public geospatial datasets and reconciling place names across sources — field-kit may be useful to you too.
 
 ## Tools
 
@@ -9,7 +9,9 @@ Our team uses these tools regularly when pre-processing geospatial data across m
 When starting a new geospatial analysis project, you often need admin boundaries, population data, roads, buildings, and land use before going into the field — but these come from 6+ different sources, each with different formats and download methods. Provision downloads everything for a given country with one command. This is great for geospatial analysts who want to quickly set up a project for analysis.
 
 ```bash
-node provision/gather.js --country BEN --admin-level 2
+cd provision
+npm install
+node gather.js --country BEN --admin-level 2
 ```
 
 ### [match-bot](match-bot/)
@@ -18,7 +20,7 @@ Geospatial datasets from different sources almost always name the same villages,
 
 ```bash
 cd match-bot
-python -m match_bot match --config config.yaml
+python -m match_bot match --config examples/demo/config.yaml
 ```
 
 ## Getting Started

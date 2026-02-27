@@ -120,7 +120,7 @@ Contains settings that apply to all countries:
 
 ### Country config files
 
-Create a file in `countries/{ISO}.json` to provide country-specific URLs. See `countries/example-benin.json` for a complete example.
+Create a file in `countries/{ISO}.json` to provide country-specific URLs. See `countries/BEN.json` for a complete example.
 
 Only include fields that apply — everything else uses defaults or is skipped.
 
@@ -130,10 +130,10 @@ Create `countries/{ISO}.json` with any of these fields:
 
 ```json
 {
-  "iso": "BEN",
+  "iso": "{ISO}",
   "adminLevel": 2,
   "populationYear": 2025,
-  "osm": "africa/benin",
+  "osm": "{osm_slug}",
   "roads": {
     "url": "https://mapwith.ai/country_exports/{ISO2}_mapwithai_road_data.gpkg.tar.gz"
   },
