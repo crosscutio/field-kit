@@ -1,8 +1,8 @@
 # Provision
 
-Our team uses this tool regularly when pre-processing data across multiple country boundaries for health campaign planning. If you do similar geospatial pre-processing work — gathering admin boundaries, population data, road networks, building footprints, and land use data from public sources — provision can save you the effort of downloading from each source individually.
+Our team uses this tool regularly when pre-processing data across multiple country boundaries for health campaign planning. If you do similar geospatial pre-processing work — gathering admin boundaries, population data, road networks, and building footprints from public sources — provision can save you the effort of downloading from each source individually.
 
-One command, one country ISO code — provision pulls from GeoBoundaries, WorldPop, Meta HRSL, Geofabrik, Overture Maps, and ESA into an organized local directory.
+One command, one country ISO code — provision pulls from GeoBoundaries, WorldPop, Meta HRSL, Geofabrik, and Overture Maps into an organized local directory.
 
 ## What it downloads
 
@@ -12,7 +12,6 @@ One command, one country ISO code — provision pulls from GeoBoundaries, WorldP
 | Road networks | [OpenStreetMap](https://download.geofabrik.de/) (Geofabrik) | Shapefile |
 | AI-detected roads | [MapWithAI](https://mapwith.ai/) (RapidEditor) | Shapefile |
 | Population rasters | [WorldPop](https://www.worldpop.org/), [Meta HRSL](https://dataforgood.facebook.com/dfg/tools/high-resolution-population-density-maps), [Kontur](https://www.kontur.io/portfolio/population-dataset/) | GeoTIFF, VRT, CSV |
-| Land use / land cover | [ESA](https://www.esa.int/) | GeoTIFF |
 | Building footprints | [Overture Maps](https://overturemaps.org/), [OSM](https://www.openstreetmap.org/) | Parquet, CSV |
 
 ## Prerequisites
@@ -63,7 +62,7 @@ This downloads all available data for Benin at admin level 2 into the `output/` 
 
 ### Available steps
 
-`boundary`, `osm`, `roads`, `population`, `landuse`, `buildings`
+`boundary`, `osm`, `roads`, `population`, `buildings`
 
 ### Examples
 
@@ -97,7 +96,6 @@ These sources require a country config with explicit URLs:
 - **OSM** — needs Geofabrik region slug (e.g., `"africa/benin"`)
 - **Roads** — MapWithAI URL uses 2-letter ISO code
 - **Kontur** — URL uses 2-letter ISO + release date
-- **Land use** — no standard URL pattern
 
 Steps with missing URLs are skipped with a message.
 
@@ -120,7 +118,7 @@ Contains settings that apply to all countries:
 
 ### Country config files
 
-Create a file in `countries/{ISO}.json` to provide country-specific URLs. See `countries/example-benin.json` for a complete example.
+Create a file in `countries/{ISO}.json` to provide country-specific URLs. See `countries/BEN.json` for a complete example.
 
 Only include fields that apply — everything else uses defaults or is skipped.
 
@@ -130,10 +128,10 @@ Create `countries/{ISO}.json` with any of these fields:
 
 ```json
 {
-  "iso": "BEN",
+  "iso": "{ISO}",
   "adminLevel": 2,
   "populationYear": 2025,
-  "osm": "africa/benin",
+  "osm": "{osm_slug}",
   "roads": {
     "url": "https://mapwith.ai/country_exports/{ISO2}_mapwithai_road_data.gpkg.tar.gz"
   },
@@ -145,9 +143,6 @@ Create `countries/{ISO}.json` with any of these fields:
       "url": "https://geodata-eu-central-1-kontur-public.s3.amazonaws.com/kontur_datasets/kontur_population_{ISO2}_{DATE}.gpkg.gz"
     }
   },
-  "landuse": {
-    "url": "https://2016africalandcover20m.esrin.esa.int/download.php"
-  }
 }
 ```
 
@@ -159,7 +154,6 @@ Where to find the URLs:
 | `roads.url` | [MapWithAI exports](https://mapwith.ai/) — replace 2-letter ISO in `{ISO2}_mapwithai_road_data.gpkg.tar.gz` |
 | `population.worldpop.url` | [WorldPop](https://hub.worldpop.org/) — only needed if the default URL doesn't work for this country |
 | `population.kontur.url` | [Kontur population](https://data.humdata.org/organization/kontur) — find the country's `.gpkg.gz` download link |
-| `landuse.url` | [ESA land cover](https://www.esa.int/) — direct download link to the GeoTIFF |
 
 ### Disabling a source
 
@@ -201,8 +195,6 @@ output/{ISO}/
 │   ├── hrsl-women-15-to-49.vrt
 │   ├── hrsl-youth-15-to-24.vrt
 │   └── kontur-total.csv       # H3→lat/lon points (~50-500 MB)
-├── land-use/
-│   └── landuse.tif
 └── buildings/
     ├── overture-buildings.parquet
     └── osm-buildings.csv
@@ -229,10 +221,6 @@ Three sources are downloaded to give analysts options:
 - **WorldPop**: Constrained individual-countries population estimates at 100m resolution. Single GeoTIFF file per country.
 - **Meta HRSL**: High Resolution Settlement Layer with 7 demographic breakdowns (total, under-5, 60+, men, women, women 15–49, youth 15–24). Downloaded as VRT files — lightweight XML pointers (~2–10 KB) to cloud-hosted Cloud-Optimized GeoTIFFs. Can be used directly by GDAL-aware tools; for offline use, clip the actual tiles with `gdal_translate`.
 - **Kontur**: H3-based population estimates in GeoPackage format. Downloaded, decompressed, converted to CSV via `ogr2ogr`, then H3 hexagons are expanded to resolution-10 children (~49 points per hex) with population distributed evenly. Output is a lat/lon/population CSV.
-
-### Land use (ESA)
-
-ESA land cover classification data as a GeoTIFF. Skipped if no URL is configured.
 
 ### Buildings
 

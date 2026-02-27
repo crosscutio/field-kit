@@ -16,7 +16,6 @@ const fetchBoundaries = require("./lib/fetch-boundaries");
 const fetchOSM = require("./lib/fetch-osm");
 const fetchRoads = require("./lib/fetch-roads");
 const fetchPopulation = require("./lib/fetch-population");
-const fetchLandUse = require("./lib/fetch-land-use");
 const fetchBuildings = require("./lib/fetch-buildings");
 
 function parseArgs() {
@@ -50,7 +49,7 @@ Options:
   --config <path>       Path to country config JSON
   --output <dir>        Output directory (default: ./output)
   --only <steps>        Comma-separated list of steps to run:
-                        boundary, osm, roads, population, landuse, buildings
+                        boundary, osm, roads, population, buildings
 `);
         process.exit(0);
     }
@@ -136,15 +135,6 @@ function buildSteps(config, outputBase) {
           `https://data.worldpop.org/GIS/Population/Global_2015_2030/R2025A/${populationYear}/${iso}/v1/100m/constrained/${isoLower}_pop_${populationYear}_CN_100m_R2025A_v1.tif`,
         hrslLayers,
         konturUrl: countryConfig.population?.kontur?.url || null,
-      },
-    },
-    landuse: {
-      label: "Land use data",
-      skip: !countryConfig.landuse?.url ? "no land use URL in country config" : null,
-      fn: fetchLandUse,
-      opts: {
-        outputDir: path.join(outputBase, "land-use"),
-        url: countryConfig.landuse?.url || null,
       },
     },
     buildings: {

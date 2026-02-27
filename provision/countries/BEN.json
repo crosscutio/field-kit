@@ -15,9 +15,5 @@
     "kontur": {
       "url": "https://geodata-eu-central-1-kontur-public.s3.amazonaws.com/kontur_datasets/kontur_population_BJ_20231101.gpkg.gz"
     }
-  },
-
-  "landuse": {
-    "url": "https://2016africalandcover20m.esrin.esa.int/download.php"
   }
 }
