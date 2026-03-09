@@ -154,11 +154,13 @@ def fuzzy_match_1_to_1(
         groups = [('__all__', dataset_to_match)]
 
     for group_key, grp in groups:
-        # Normalize group_key to tuple
+        # Normalize group_key to dict
+        # pandas groupby with a list returns tuple keys even for single columns
         if not group_columns:
             group_vals = {}
         elif len(group_columns) == 1:
-            group_vals = {group_columns[0]: group_key}
+            val = group_key[0] if isinstance(group_key, tuple) else group_key
+            group_vals = {group_columns[0]: val}
         else:
             group_vals = dict(zip(group_columns, group_key))
 
@@ -169,8 +171,8 @@ def fuzzy_match_1_to_1(
         if group_columns:
             mask = pd.Series(True, index=reference_dataset.index)
             for col in group_columns:
-                val = group_vals[col]
-                mask = mask & (reference_dataset[col] == val)
+                val = str(group_vals[col])
+                mask = mask & (reference_dataset[col].astype(str) == val)
             refs = reference_dataset[mask]
         else:
             refs = reference_dataset
