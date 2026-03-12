@@ -30,6 +30,7 @@ def load_dataset(path: str, fmt: Optional[str] = None, layer: Optional[str] = No
         ext = p.suffix.lower()
         format_map = {
             '.csv': 'csv',
+            '.geojson': 'geojson',
             '.shp': 'shp',
             '.gpkg': 'gpkg',
             '.gdb': 'gdb',
@@ -67,3 +68,20 @@ def load_dataset(path: str, fmt: Optional[str] = None, layer: Optional[str] = No
     if 'geometry' in gdf.columns:
         return pd.DataFrame(gdf.drop(columns='geometry'))
     return pd.DataFrame(gdf)
+
+
+def get_columns(path: str) -> list[str]:
+    """Return attribute column names from a dataset file (any supported format)."""
+    p = Path(path)
+    ext = p.suffix.lower()
+    if ext == '.csv':
+        return list(pd.read_csv(p, nrows=0).columns)
+    try:
+        import geopandas as gpd
+    except ImportError:
+        raise ImportError(
+            "geopandas is required to read spatial files. "
+            "Install it with: pip install geopandas"
+        )
+    gdf = gpd.read_file(str(p), rows=1)
+    return [c for c in gdf.columns if c != 'geometry']

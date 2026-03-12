@@ -16,6 +16,33 @@ from pathlib import Path
 import pandas as pd
 
 
+def run(config, level='leaf', threshold=70):
+    """Suggest manual matches programmatically.
+
+    Args:
+        config: A MatcherConfig instance.
+        level: 'leaf' or a hierarchy label (e.g., 'province').
+        threshold: Minimum fuzzy match score (0-100).
+    """
+    try:
+        from rapidfuzz import fuzz
+    except ImportError:
+        print("ERROR: rapidfuzz is required for match suggestions.")
+        print("Install with: pip install rapidfuzz")
+        return
+
+    lookups_dir = config.lookups_dir
+    labels = config.hierarchy_labels
+
+    if level == 'leaf':
+        _suggest_leaf_matches(config, lookups_dir, labels, fuzz, threshold)
+    elif level in labels:
+        _suggest_hierarchy_matches(config, lookups_dir, level, fuzz, threshold)
+    else:
+        print(f"Unknown level: {level}")
+        print(f"Available levels: leaf, {', '.join(labels)}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='Suggest manual matches for unmatched records'
@@ -34,28 +61,10 @@ def main():
     )
     args = parser.parse_args()
 
-    try:
-        from rapidfuzz import fuzz
-    except ImportError:
-        print("ERROR: rapidfuzz is required for match suggestions.")
-        print("Install with: pip install rapidfuzz")
-        sys.exit(1)
-
     from match_bot.core.config import MatcherConfig
-    from match_bot.core.lookup import load_lookup
 
     config = MatcherConfig.from_yaml(args.config)
-    lookups_dir = config.lookups_dir
-    labels = config.hierarchy_labels
-
-    if args.level == 'leaf':
-        _suggest_leaf_matches(config, lookups_dir, labels, fuzz, args.threshold)
-    elif args.level in labels:
-        _suggest_hierarchy_matches(config, lookups_dir, args.level, fuzz, args.threshold)
-    else:
-        print(f"Unknown level: {args.level}")
-        print(f"Available levels: leaf, {', '.join(labels)}")
-        sys.exit(1)
+    run(config, level=args.level, threshold=args.threshold)
 
 
 def _suggest_leaf_matches(config, lookups_dir, labels, fuzz, threshold):

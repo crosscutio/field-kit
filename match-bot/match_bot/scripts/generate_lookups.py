@@ -13,16 +13,12 @@ from pathlib import Path
 import pandas as pd
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description='Generate hierarchy and leaf lookup tables from match results'
-    )
-    parser.add_argument(
-        '--config', '-c', required=True,
-        help='Path to the YAML config file'
-    )
-    args = parser.parse_args()
+def run(config):
+    """Generate lookup tables programmatically.
 
+    Args:
+        config: A MatcherConfig instance.
+    """
     from match_bot.core.config import MatcherConfig
     from match_bot.core.lookup import (
         generate_hierarchy_lookup,
@@ -33,10 +29,8 @@ def main():
     )
     from match_bot.core.matching import MatchingPipeline
 
-    config = MatcherConfig.from_yaml(args.config)
     print(f"Project: {config.project_name}")
 
-    # Run the pipeline to get match results
     pipeline = MatchingPipeline(config)
     pipeline.load_data()
     pipeline.load_lookups()
@@ -47,12 +41,10 @@ def main():
     lookups_dir.mkdir(parents=True, exist_ok=True)
     labels = config.hierarchy_labels
 
-    # Generate hierarchy lookups
     for i, label in enumerate(labels):
         target_col = f'_target_{label}'
         ref_col = f'_ref_{label}'
 
-        # Check that columns exist in matched data
         if result.matched.empty:
             print(f"  No matches — skipping {label} lookup")
             continue
@@ -70,7 +62,6 @@ def main():
             ref_col=ref_col,
         )
 
-        # Preserve manual matches from existing lookup
         existing_path = lookups_dir / f'{label}_lookup.csv'
         if existing_path.exists():
             existing = load_lookup(str(existing_path))
@@ -80,7 +71,6 @@ def main():
         save_lookup(lookup, str(out_path))
         print(f"  Wrote {len(lookup)} entries to {out_path}")
 
-    # Generate leaf lookup
     leaf_lookup = generate_leaf_lookup(
         matched=result.matched,
         unmatched_target=result.unmatched_target,
@@ -88,7 +78,6 @@ def main():
         config=config,
     )
 
-    # Preserve manual matches
     existing_leaf_path = lookups_dir / 'leaf_lookup.csv'
     if existing_leaf_path.exists():
         existing_leaf = load_lookup(str(existing_leaf_path))
@@ -97,7 +86,6 @@ def main():
     save_lookup(leaf_lookup, str(existing_leaf_path))
     print(f"  Wrote {len(leaf_lookup)} entries to {existing_leaf_path}")
 
-    # Print summary
     if 'unmatched' in leaf_lookup.columns:
         matched_count = len(leaf_lookup[leaf_lookup['unmatched'] != 'x'])
     else:
@@ -110,6 +98,22 @@ def main():
         print(f"  Match types:")
         for mt, count in leaf_lookup['match_type'].value_counts().items():
             print(f"    {mt}: {count}")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Generate hierarchy and leaf lookup tables from match results'
+    )
+    parser.add_argument(
+        '--config', '-c', required=True,
+        help='Path to the YAML config file'
+    )
+    args = parser.parse_args()
+
+    from match_bot.core.config import MatcherConfig
+
+    config = MatcherConfig.from_yaml(args.config)
+    run(config)
 
 
 if __name__ == '__main__':
