@@ -18,3 +18,5 @@ __pycache__/
 build/
 dist/
 .DS_Store
+match-bot/instance/uploads/
+match-bot/dev/claude_references/

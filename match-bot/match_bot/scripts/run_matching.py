@@ -11,6 +11,48 @@ import sys
 from pathlib import Path
 
 
+def run(config, verbose=False):
+    """Run the matching pipeline programmatically.
+
+    Args:
+        config: A MatcherConfig instance.
+        verbose: If True, print match type breakdown.
+    """
+    from match_bot.core.matching import MatchingPipeline
+
+    print(f"Project: {config.project_name}")
+    print(f"Hierarchy levels: {config.hierarchy_labels}")
+
+    pipeline = MatchingPipeline(config)
+    pipeline.load_data()
+    pipeline.load_lookups()
+    pipeline.apply_hierarchy_mappings()
+    result = pipeline.run()
+
+    output_dir = config.output_dir
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    matched_path = output_dir / 'matched.csv'
+    result.matched.to_csv(matched_path, index=False)
+    print(f"\nWrote {len(result.matched)} matches to {matched_path}")
+
+    print(f"\n{'=' * 50}")
+    print("MATCHING SUMMARY")
+    print(f"{'=' * 50}")
+    print(f"  Matched:            {result.counts.get('matched', 0)}")
+    print(f"  Unmatched reference: {result.counts.get('unmatched_ref', 0)}")
+    print(f"  Unmatched target:    {result.counts.get('unmatched_target', 0)}")
+    print(f"  Match rate:          {result.match_rate * 100:.1f}%")
+
+    if verbose:
+        print("\n  Match type breakdown:")
+        for key, val in sorted(result.counts.items()):
+            if key not in ('matched', 'unmatched_ref', 'unmatched_target'):
+                print(f"    {key}: {val}")
+
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='Generic Matcher — match named places to a GIS dataset'
@@ -26,46 +68,12 @@ def main():
 
     args = parser.parse_args()
 
-    # Check dependencies
     _check_dependencies()
 
     from match_bot.core.config import MatcherConfig
-    from match_bot.core.matching import MatchingPipeline
 
-    # Load config
     config = MatcherConfig.from_yaml(args.config)
-    print(f"Project: {config.project_name}")
-    print(f"Hierarchy levels: {config.hierarchy_labels}")
-
-    # Create and run pipeline
-    pipeline = MatchingPipeline(config)
-    pipeline.load_data()
-    pipeline.load_lookups()
-    pipeline.apply_hierarchy_mappings()
-    result = pipeline.run()
-
-    # Write matched output
-    output_dir = config.output_dir
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    matched_path = output_dir / 'matched.csv'
-    result.matched.to_csv(matched_path, index=False)
-    print(f"\nWrote {len(result.matched)} matches to {matched_path}")
-
-    # Print summary
-    print(f"\n{'=' * 50}")
-    print("MATCHING SUMMARY")
-    print(f"{'=' * 50}")
-    print(f"  Matched:            {result.counts.get('matched', 0)}")
-    print(f"  Unmatched reference: {result.counts.get('unmatched_ref', 0)}")
-    print(f"  Unmatched target:    {result.counts.get('unmatched_target', 0)}")
-    print(f"  Match rate:          {result.match_rate * 100:.1f}%")
-
-    if args.verbose:
-        print("\n  Match type breakdown:")
-        for key, val in sorted(result.counts.items()):
-            if key not in ('matched', 'unmatched_ref', 'unmatched_target'):
-                print(f"    {key}: {val}")
+    run(config, verbose=args.verbose)
 
 
 def _check_dependencies():

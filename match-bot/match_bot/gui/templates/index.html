@@ -1,0 +1,595 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div id="loading-overlay">
+  <div class="text-center text-white">
+    <div class="spinner-border" role="status" style="width:3rem;height:3rem;">
+      <span class="visually-hidden">Running...</span>
+    </div>
+    <div class="mt-2">Running pipeline...</div>
+  </div>
+</div>
+
+<div class="main-layout">
+
+<!-- Left Column: Control Panel -->
+<div>
+
+<form id="main-form" enctype="multipart/form-data">
+
+  <!-- Project Name -->
+  <div class="project-name-section">
+    <label for="project_name" class="form-label">Project Name</label>
+    <input type="text" class="form-control" id="project_name" name="project_name" value="Untitled">
+  </div>
+
+  <!-- Reference Dataset -->
+  <div class="card">
+    <div class="card-header fw-bold">Reference Dataset</div>
+    <div class="card-body">
+      <div class="mb-3">
+        <label for="ref_file" class="form-label">Upload CSV</label>
+        <input type="file" class="form-control" id="ref_file" name="ref_file" accept=".csv">
+        <div class="form-text" id="ref_file_name"></div>
+      </div>
+      <div class="row mb-3">
+        <div class="col-md-6">
+          <label for="ref_id_column" class="form-label">ID Column</label>
+          <select class="form-select" id="ref_id_column" name="ref_id_column">
+            <option value="">-- upload CSV first --</option>
+          </select>
+        </div>
+        <div class="col-md-6">
+          <label for="ref_name_column" class="form-label">Name Column</label>
+          <select class="form-select" id="ref_name_column" name="ref_name_column">
+            <option value="">-- upload CSV first --</option>
+          </select>
+        </div>
+      </div>
+      <label class="form-label">Hierarchy</label>
+      <div id="ref_hierarchy_container"></div>
+      <button type="button" class="btn btn-outline-secondary btn-sm mt-1" onclick="addHierarchyRow('ref')">+ Add Level</button>
+    </div>
+  </div>
+
+  <!-- Target Dataset -->
+  <div class="card">
+    <div class="card-header fw-bold">Target Dataset</div>
+    <div class="card-body">
+      <div class="mb-3">
+        <label for="target_file" class="form-label">Upload File (CSV or GeoJSON)</label>
+        <input type="file" class="form-control" id="target_file" name="target_file" accept=".csv,.geojson">
+        <div class="form-text" id="target_file_name"></div>
+      </div>
+      <div class="row mb-3">
+        <div class="col-md-6">
+          <label for="target_id_column" class="form-label">ID Column</label>
+          <select class="form-select" id="target_id_column" name="target_id_column">
+            <option value="">-- upload CSV first --</option>
+          </select>
+        </div>
+        <div class="col-md-6">
+          <label for="target_name_column" class="form-label">Name Column</label>
+          <select class="form-select" id="target_name_column" name="target_name_column">
+            <option value="">-- upload CSV first --</option>
+          </select>
+        </div>
+      </div>
+      <label class="form-label">Hierarchy</label>
+      <div id="target_hierarchy_container"></div>
+      <button type="button" class="btn btn-outline-secondary btn-sm mt-1" onclick="addHierarchyRow('target')">+ Add Level</button>
+    </div>
+  </div>
+
+  <!-- Settings -->
+  <div class="card">
+    <div class="card-header fw-bold">Settings</div>
+    <div class="card-body">
+      <div class="row">
+        <div class="col-md-6 mb-3">
+          <label for="case" class="form-label">Case</label>
+          <select class="form-select" id="case" name="case">
+            <option value="lower" selected>lower</option>
+            <option value="upper">upper</option>
+            <option value="title">title</option>
+            <option value="">none</option>
+          </select>
+        </div>
+        <div class="col-md-6 mb-3">
+          <label for="levenshtein_distance_threshold" class="form-label">Levenshtein Distance</label>
+          <input type="number" class="form-control" id="levenshtein_distance_threshold"
+                 name="levenshtein_distance_threshold" value="1" min="0" max="10">
+        </div>
+        <div class="col-md-6 mb-3">
+          <label for="levenshtein_score_threshold" class="form-label">Levenshtein Score</label>
+          <input type="number" class="form-control" id="levenshtein_score_threshold"
+                 name="levenshtein_score_threshold" value="0.25" min="0" max="1" step="0.05">
+        </div>
+        <div class="col-md-6 mb-3 d-flex align-items-end gap-3">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="remove_accents" name="remove_accents" checked>
+            <label class="form-check-label" for="remove_accents">Remove accents</label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="validate_numbers" name="validate_numbers" checked>
+            <label class="form-check-label" for="validate_numbers">Validate numbers</label>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Config YAML -->
+  <div class="card">
+    <div class="card-header fw-bold">Config YAML</div>
+    <div class="card-body">
+      <div class="d-flex gap-2">
+        <label class="btn btn-outline-primary mb-0">
+          Load Config YAML...
+          <input type="file" id="load_config_file" accept=".yaml,.yml" hidden>
+        </label>
+        <button type="button" class="btn btn-outline-primary" id="save_config_btn">Save Config YAML...</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Run -->
+  <div class="card">
+    <div class="card-header fw-bold">Run</div>
+    <div class="card-body">
+      <div class="d-flex flex-wrap gap-2 align-items-end">
+        <button type="button" class="btn btn-primary" id="btn_match">Run Match</button>
+        <button type="button" class="btn btn-primary" id="btn_lookups">Generate Lookups</button>
+        <button type="button" class="btn btn-primary" id="btn_suggest">Suggest Matches</button>
+        <div>
+          <label for="suggest_level" class="form-label mb-0 me-1">Level:</label>
+          <select class="form-select form-select-sm d-inline-block" style="width:auto" id="suggest_level" name="suggest_level">
+            <option value="leaf" selected>leaf</option>
+          </select>
+        </div>
+        <div>
+          <label for="suggest_threshold" class="form-label mb-0 me-1">Threshold:</label>
+          <input type="number" class="form-control form-control-sm d-inline-block" style="width:5rem"
+                 id="suggest_threshold" name="suggest_threshold" value="70" min="0" max="100">
+        </div>
+      </div>
+    </div>
+  </div>
+
+</form>
+
+</div>
+
+<!-- Right Side: Tables + Map -->
+<div class="right-panel">
+  <!-- Tables row -->
+  <div class="tables-row">
+    <!-- Unmatched Reference Records -->
+    <div>
+      <div class="card">
+        <div class="card-header fw-bold d-flex justify-content-between align-items-center">
+          Unmatched Reference Records
+          <span class="badge bg-secondary" id="unmatched-ref-count">0</span>
+        </div>
+        <div class="card-body">
+          <div class="unmatched-table-wrapper" id="unmatched-ref-table">
+            <p class="text-muted mb-0">Run matching to see unmatched records</p>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- Unmatched Target Records -->
+    <div>
+      <div class="card">
+        <div class="card-header fw-bold d-flex justify-content-between align-items-center">
+          Unmatched Target Records
+          <span class="badge bg-secondary" id="unmatched-target-count">0</span>
+        </div>
+        <div class="card-body">
+          <div class="unmatched-table-wrapper" id="unmatched-target-table">
+            <p class="text-muted mb-0">Run matching to see unmatched records</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- Map (shown when GeoJSON target uploaded) -->
+  <div id="map-container" style="display:none;">
+    <div class="card" style="height:100%;">
+      <div class="card-header fw-bold">Target Map</div>
+      <div class="card-body p-0">
+        <div id="map" style="height:100%;"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div><!-- /main-layout -->
+
+<!-- Output (full width below) -->
+<div class="card">
+  <div class="card-header fw-bold">Output</div>
+  <div class="card-body">
+    <pre id="output-log">Ready. Upload CSV files and configure your matching project above.</pre>
+    <div class="mt-2" id="download-links"></div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+// --- Column data per dataset (populated on CSV upload) ---
+const columns = { ref: [], target: [] };
+
+// --- CSV Upload & Column Detection ---
+document.getElementById('ref_file').addEventListener('change', e => uploadCSV(e, 'ref'));
+document.getElementById('target_file').addEventListener('change', e => uploadCSV(e, 'target'));
+
+function uploadCSV(event, prefix) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('prefix', prefix);
+
+  fetch('/api/columns', { method: 'POST', body: formData })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) { alert(data.error); return; }
+      columns[prefix] = data.columns;
+      document.getElementById(prefix + '_file_name').textContent = data.filename;
+      populateDropdowns(prefix, data.columns);
+      updateSuggestLevels();
+      // Show/hide map for GeoJSON target uploads
+      if (prefix === 'target') {
+        if (data.filename && data.filename.toLowerCase().endsWith('.geojson')) {
+          showMap('/api/geojson');
+        } else {
+          hideMap();
+        }
+      }
+    })
+    .catch(err => alert('Upload failed: ' + err));
+}
+
+function populateDropdowns(prefix, cols) {
+  ['id_column', 'name_column'].forEach(suffix => {
+    const sel = document.getElementById(prefix + '_' + suffix);
+    sel.innerHTML = '<option value="">-- select --</option>';
+    cols.forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c; opt.textContent = c;
+      sel.appendChild(opt);
+    });
+  });
+  // Also update hierarchy column dropdowns
+  document.querySelectorAll('#' + prefix + '_hierarchy_container .hier-col-select').forEach(sel => {
+    const prev = sel.value;
+    sel.innerHTML = '<option value="">-- select --</option>';
+    cols.forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c; opt.textContent = c;
+      sel.appendChild(opt);
+    });
+    if (prev && cols.includes(prev)) sel.value = prev;
+  });
+}
+
+// --- Hierarchy Rows ---
+function addHierarchyRow(prefix, colValue, labelValue) {
+  const container = document.getElementById(prefix + '_hierarchy_container');
+  const row = document.createElement('div');
+  row.className = 'hierarchy-row d-flex gap-2 align-items-center';
+  const cols = columns[prefix] || [];
+  let options = '<option value="">-- select --</option>';
+  cols.forEach(c => {
+    const selected = (c === colValue) ? ' selected' : '';
+    options += `<option value="${c}"${selected}>${c}</option>`;
+  });
+  // If colValue was provided but not in the column list, add it so the selection is preserved
+  if (colValue && !cols.includes(colValue)) {
+    options += `<option value="${colValue}" selected>${colValue}</option>`;
+  }
+  row.innerHTML = `
+    <select class="form-select form-select-sm hier-col-select" style="width:auto"
+            name="${prefix}_hier_col">${options}</select>
+    <input type="text" class="form-control form-control-sm" style="width:10rem"
+           name="${prefix}_hier_label" placeholder="Label (e.g. province)"
+           value="${labelValue || ''}">
+    <button type="button" class="btn btn-outline-danger btn-sm" onclick="this.parentElement.remove(); updateSuggestLevels();">&times;</button>
+  `;
+  container.appendChild(row);
+  updateSuggestLevels();
+}
+
+function updateSuggestLevels() {
+  const sel = document.getElementById('suggest_level');
+  const prev = sel.value;
+  sel.innerHTML = '<option value="leaf">leaf</option>';
+  document.querySelectorAll('[name="ref_hier_label"]').forEach(inp => {
+    const v = inp.value.trim();
+    if (v) {
+      const opt = document.createElement('option');
+      opt.value = v; opt.textContent = v;
+      sel.appendChild(opt);
+    }
+  });
+  if (prev) sel.value = prev;
+}
+
+// --- Collect form data as JSON ---
+function collectFormData() {
+  const fd = {
+    project_name: document.getElementById('project_name').value,
+    ref_id_column: document.getElementById('ref_id_column').value,
+    ref_name_column: document.getElementById('ref_name_column').value,
+    target_id_column: document.getElementById('target_id_column').value,
+    target_name_column: document.getElementById('target_name_column').value,
+    case: document.getElementById('case').value,
+    remove_accents: document.getElementById('remove_accents').checked,
+    levenshtein_distance_threshold: parseInt(document.getElementById('levenshtein_distance_threshold').value),
+    levenshtein_score_threshold: parseFloat(document.getElementById('levenshtein_score_threshold').value),
+    validate_numbers: document.getElementById('validate_numbers').checked,
+    ref_hierarchy: [],
+    target_hierarchy: [],
+  };
+  document.querySelectorAll('#ref_hierarchy_container .hierarchy-row').forEach(row => {
+    const col = row.querySelector('[name="ref_hier_col"]').value;
+    const label = row.querySelector('[name="ref_hier_label"]').value.trim();
+    if (col && label) fd.ref_hierarchy.push({ column: col, label: label });
+  });
+  document.querySelectorAll('#target_hierarchy_container .hierarchy-row').forEach(row => {
+    const col = row.querySelector('[name="target_hier_col"]').value;
+    const label = row.querySelector('[name="target_hier_label"]').value.trim();
+    if (col && label) fd.target_hierarchy.push({ column: col, label: label });
+  });
+  return fd;
+}
+
+// --- Run pipeline ---
+function runPipeline(action) {
+  const overlay = document.getElementById('loading-overlay');
+  const outputLog = document.getElementById('output-log');
+  const downloadLinks = document.getElementById('download-links');
+  overlay.classList.add('active');
+  outputLog.textContent = 'Running...';
+  downloadLinks.innerHTML = '';
+
+  const formData = collectFormData();
+  let url = '/api/run/' + action;
+  if (action === 'suggest') {
+    formData.suggest_level = document.getElementById('suggest_level').value;
+    formData.suggest_threshold = parseInt(document.getElementById('suggest_threshold').value);
+  }
+
+  fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(formData),
+  })
+    .then(r => r.json())
+    .then(data => {
+      overlay.classList.remove('active');
+      if (data.error) {
+        outputLog.textContent = 'ERROR: ' + data.error;
+        return;
+      }
+      outputLog.textContent = data.output || 'Done.';
+      if (data.downloads && data.downloads.length > 0) {
+        data.downloads.forEach(dl => {
+          const a = document.createElement('a');
+          a.href = dl.url;
+          a.className = 'btn btn-outline-success btn-sm me-2';
+          a.textContent = 'Download ' + dl.name;
+          a.download = dl.name;
+          downloadLinks.appendChild(a);
+        });
+      }
+      if (action === 'match') {
+        fetchUnmatched();
+        updateMapColors();
+      }
+    })
+    .catch(err => {
+      overlay.classList.remove('active');
+      outputLog.textContent = 'ERROR: ' + err;
+    });
+}
+
+document.getElementById('btn_match').addEventListener('click', () => runPipeline('match'));
+document.getElementById('btn_lookups').addEventListener('click', () => runPipeline('lookups'));
+document.getElementById('btn_suggest').addEventListener('click', () => runPipeline('suggest'));
+
+// --- Load Config YAML ---
+document.getElementById('load_config_file').addEventListener('change', function() {
+  const file = this.files[0];
+  if (!file) return;
+  const formData = new FormData();
+  formData.append('file', file);
+
+  fetch('/api/load-config', { method: 'POST', body: formData })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) { alert(data.error); return; }
+      // Populate form from loaded config
+      const fd = data.form_data;
+      document.getElementById('project_name').value = fd.project_name || '';
+      document.getElementById('case').value = fd.case || 'lower';
+      document.getElementById('remove_accents').checked = fd.remove_accents !== false;
+      document.getElementById('levenshtein_distance_threshold').value = fd.levenshtein_distance_threshold || 1;
+      document.getElementById('levenshtein_score_threshold').value = fd.levenshtein_score_threshold || 0.25;
+      document.getElementById('validate_numbers').checked = fd.validate_numbers !== false;
+
+      // Set column selections if columns are available
+      if (fd.ref_id_column) setSelectValue('ref_id_column', fd.ref_id_column);
+      if (fd.ref_name_column) setSelectValue('ref_name_column', fd.ref_name_column);
+      if (fd.target_id_column) setSelectValue('target_id_column', fd.target_id_column);
+      if (fd.target_name_column) setSelectValue('target_name_column', fd.target_name_column);
+
+      // Rebuild hierarchy rows
+      document.getElementById('ref_hierarchy_container').innerHTML = '';
+      (fd.ref_hierarchy || []).forEach(h => addHierarchyRow('ref', h.column, h.label));
+      document.getElementById('target_hierarchy_container').innerHTML = '';
+      (fd.target_hierarchy || []).forEach(h => addHierarchyRow('target', h.column, h.label));
+
+      document.getElementById('output-log').textContent = 'Config loaded from ' + file.name;
+    })
+    .catch(err => alert('Failed to load config: ' + err));
+});
+
+function setSelectValue(id, value) {
+  const sel = document.getElementById(id);
+  // Add option if not present
+  if (!Array.from(sel.options).some(o => o.value === value)) {
+    const opt = document.createElement('option');
+    opt.value = value; opt.textContent = value;
+    sel.appendChild(opt);
+  }
+  sel.value = value;
+}
+
+// --- Unmatched Records Tables ---
+function fetchUnmatched() {
+  fetch('/api/unmatched')
+    .then(r => r.json())
+    .then(data => {
+      renderTable('unmatched-ref-table', data.unmatched_ref, 'unmatched-ref-count', 'ref');
+      renderTable('unmatched-target-table', data.unmatched_target, 'unmatched-target-count', 'target');
+    })
+    .catch(err => console.error('Failed to fetch unmatched data:', err));
+}
+
+function renderTable(containerId, data, countBadgeId, prefix) {
+  const container = document.getElementById(containerId);
+  const badge = document.getElementById(countBadgeId);
+
+  if (!data || !data.columns || data.columns.length === 0 || data.rows.length === 0) {
+    container.innerHTML = '<p class="text-muted mb-0">No unmatched records</p>';
+    badge.textContent = '0';
+    badge.classList.remove('badge-count-nonzero');
+    badge.classList.add('badge-count-zero');
+    return;
+  }
+
+  badge.textContent = data.rows.length;
+  badge.classList.remove('badge-count-zero');
+  badge.classList.add('badge-count-nonzero');
+
+  // Build ordered list of desired columns: id, name_raw, then hierarchy labels
+  const p = '_' + prefix + '_';
+  const hierLabels = [];
+  document.querySelectorAll('#' + prefix + '_hierarchy_container [name="' + prefix + '_hier_label"]').forEach(inp => {
+    const v = inp.value.trim();
+    if (v) hierLabels.push(v);
+  });
+  const wantedCols = ['id', 'name_raw'].concat(hierLabels);
+  const wantedPrefixed = wantedCols.map(c => p + c);
+
+  // Find indices for each wanted column
+  const colIndices = [];
+  const displayHeaders = [];
+  wantedPrefixed.forEach((col, i) => {
+    const idx = data.columns.indexOf(col);
+    if (idx !== -1) {
+      colIndices.push(idx);
+      displayHeaders.push(wantedCols[i]);
+    }
+  });
+
+  let html = '<table class="table table-sm table-striped mb-0"><thead><tr>';
+  displayHeaders.forEach(col => { html += '<th>' + col + '</th>'; });
+  html += '</tr></thead><tbody>';
+  // Sort rows alphabetically by name_raw (second column in our selection)
+  const nameRawIdx = colIndices[1];
+  if (nameRawIdx !== undefined) {
+    data.rows.sort((a, b) => {
+      const av = (a[nameRawIdx] || '').toString().toLowerCase();
+      const bv = (b[nameRawIdx] || '').toString().toLowerCase();
+      return av.localeCompare(bv);
+    });
+  }
+
+  data.rows.forEach(row => {
+    html += '<tr>';
+    colIndices.forEach(idx => { html += '<td>' + (row[idx] === '' ? '' : row[idx]) + '</td>'; });
+    html += '</tr>';
+  });
+  html += '</tbody></table>';
+  container.innerHTML = html;
+}
+
+// --- Leaflet Map ---
+let map = null;
+let geojsonLayer = null;
+
+function showMap(geojsonUrl) {
+  const container = document.getElementById('map-container');
+  container.style.display = '';
+  if (!map) {
+    map = L.map('map');
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+  }
+  // Leaflet needs a tick to measure the now-visible container
+  setTimeout(() => map.invalidateSize(), 0);
+  if (geojsonLayer) { map.removeLayer(geojsonLayer); }
+  fetch(geojsonUrl)
+    .then(r => r.json())
+    .then(data => {
+      geojsonLayer = L.geoJSON(data, {
+        style: { color: '#888', fillColor: '#aaa', fillOpacity: 0.4, weight: 1 }
+      }).addTo(map);
+      map.invalidateSize();
+      map.fitBounds(geojsonLayer.getBounds());
+    });
+}
+
+function hideMap() {
+  document.getElementById('map-container').style.display = 'none';
+}
+
+function updateMapColors() {
+  if (!map || !geojsonLayer) return;
+  const idProp = document.getElementById('target_id_column').value;
+  if (!idProp) return;
+  fetch('/api/matched-ids')
+    .then(r => r.json())
+    .then(data => {
+      const matchedIds = new Set(data.ids.map(String));
+      geojsonLayer.eachLayer(layer => {
+        const fid = String(layer.feature.properties[idProp] || '');
+        const matched = matchedIds.has(fid);
+        layer.setStyle({
+          color: matched ? '#12994a' : '#888',
+          fillColor: matched ? '#16BF59' : '#aaa',
+          fillOpacity: 0.4,
+          weight: 1
+        });
+      });
+    });
+}
+
+// --- Save Config YAML ---
+document.getElementById('save_config_btn').addEventListener('click', function() {
+  const formData = collectFormData();
+
+  fetch('/api/save-config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(formData),
+  })
+    .then(r => r.blob())
+    .then(blob => {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = (formData.project_name || 'config').replace(/[^a-zA-Z0-9_-]/g, '_') + '.yaml';
+      a.click();
+      URL.revokeObjectURL(url);
+    })
+    .catch(err => alert('Failed to save config: ' + err));
+});
+</script>
+{% endblock %}
