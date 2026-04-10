@@ -84,6 +84,21 @@ class MatchingPipeline:
         target_raw = load_dataset(str(target_path), cfg.target.format, cfg.target.layer)
         self.target = self._normalize_dataset(target_raw, cfg.target, prefix='target')
 
+        # Dissolve to matching level: if the source data is more granular than the
+        # columns selected for matching (e.g. GeoJSON at Admin4 but matching at
+        # Admin3), multiple rows will share the same id/name/hierarchy values.
+        # Deduplicate so each unique combination appears once.
+        dedup_cols = self._group_columns + ['id', 'name']
+        ref_before = len(self.ref)
+        self.ref = self.ref.drop_duplicates(subset=dedup_cols).reset_index(drop=True)
+        target_before = len(self.target)
+        self.target = self.target.drop_duplicates(subset=dedup_cols).reset_index(drop=True)
+
+        if ref_before != len(self.ref):
+            print(f"  Dissolved reference from {ref_before} to {len(self.ref)} unique records")
+        if target_before != len(self.target):
+            print(f"  Dissolved target from {target_before} to {len(self.target)} unique records")
+
         print(f"Loaded {len(self.ref)} reference records, {len(self.target)} target records")
 
     def _normalize_dataset(self, df: pd.DataFrame, ds_cfg, prefix: str) -> pd.DataFrame:
