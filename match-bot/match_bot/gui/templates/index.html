@@ -162,6 +162,11 @@
 
 <!-- Right Side: Tables + Map -->
 <div class="right-panel">
+  <!-- Level selector -->
+  <div id="unmatched-level-bar" class="d-none d-flex align-items-center gap-2 mb-2">
+    <label class="form-label mb-0 small fw-bold">View level:</label>
+    <select id="unmatched-level" class="form-select form-select-sm" style="width:auto;"></select>
+  </div>
   <!-- Tables row -->
   <div class="tables-row">
     <!-- Unmatched Reference Records -->
@@ -192,6 +197,13 @@
         </div>
       </div>
     </div>
+  </div>
+  <!-- Manual match toolbar -->
+  <div id="manual-match-toolbar" class="d-none d-flex gap-2 align-items-center">
+    <button type="button" class="btn btn-outline-primary btn-sm" id="btn-pick-match">Pick new match</button>
+    <button type="button" class="btn btn-success btn-sm" id="btn-save-match" disabled>Save match</button>
+    <button type="button" class="btn btn-outline-secondary btn-sm d-none" id="btn-cancel-match">Cancel</button>
+    <span id="pick-status" class="text-muted small"></span>
   </div>
   <!-- Map (shown when GeoJSON target uploaded) -->
   <div id="map-container" style="display:none;">
@@ -349,6 +361,7 @@ function collectFormData() {
 
 // --- Run pipeline ---
 function runPipeline(action) {
+  if (pickingMode) exitPickingMode();
   const overlay = document.getElementById('loading-overlay');
   const outputLog = document.getElementById('output-log');
   const downloadLinks = document.getElementById('download-links');
@@ -387,8 +400,9 @@ function runPipeline(action) {
         });
       }
       if (action === 'match') {
+        updateUnmatchedLevels();
         fetchUnmatched();
-        updateMapColors();
+        refreshMap();
       }
     })
     .catch(err => {
@@ -449,13 +463,58 @@ function setSelectValue(id, value) {
   sel.value = value;
 }
 
+// --- Unmatched Level Selector ---
+function getSelectedLevel() {
+  const sel = document.getElementById('unmatched-level');
+  return sel ? sel.value || 'leaf' : 'leaf';
+}
+
+function updateUnmatchedLevels() {
+  const sel = document.getElementById('unmatched-level');
+  const prev = sel.value;
+  sel.innerHTML = '';
+  document.querySelectorAll('[name="ref_hier_label"]').forEach(inp => {
+    const v = inp.value.trim();
+    if (v) {
+      const opt = document.createElement('option');
+      opt.value = v; opt.textContent = v;
+      sel.appendChild(opt);
+    }
+  });
+  const leafOpt = document.createElement('option');
+  leafOpt.value = 'leaf'; leafOpt.textContent = 'leaf';
+  sel.appendChild(leafOpt);
+  if (prev && Array.from(sel.options).some(o => o.value === prev)) {
+    sel.value = prev;
+  }
+}
+
+document.getElementById('unmatched-level').addEventListener('change', function() {
+  if (pickingMode) exitPickingMode();
+  fetchUnmatched();
+  refreshMap();
+});
+
 // --- Unmatched Records Tables ---
 function fetchUnmatched() {
-  fetch('/api/unmatched')
+  const level = getSelectedLevel();
+  fetch('/api/unmatched?level=' + encodeURIComponent(level))
     .then(r => r.json())
     .then(data => {
       renderTable('unmatched-ref-table', data.unmatched_ref, 'unmatched-ref-count', 'ref');
       renderTable('unmatched-target-table', data.unmatched_target, 'unmatched-target-count', 'target');
+      document.getElementById('unmatched-level-bar').classList.remove('d-none');
+      const toolbar = document.getElementById('manual-match-toolbar');
+      const hasRows = (data.unmatched_ref.rows && data.unmatched_ref.rows.length > 0)
+                   || (data.unmatched_target.rows && data.unmatched_target.rows.length > 0);
+      if (hasRows) {
+        toolbar.classList.remove('d-none');
+      } else {
+        toolbar.classList.add('d-none');
+      }
+      if (pickingMode) {
+        document.querySelectorAll('.unmatched-table-wrapper').forEach(w => w.classList.add('picking-mode'));
+      }
     })
     .catch(err => console.error('Failed to fetch unmatched data:', err));
 }
@@ -523,6 +582,16 @@ function renderTable(containerId, data, countBadgeId, prefix) {
 let map = null;
 let geojsonLayer = null;
 
+function matchStyle(feature) {
+  const matched = feature.properties && feature.properties._matched;
+  return {
+    color: matched ? '#12994a' : '#888',
+    fillColor: matched ? '#16BF59' : '#aaa',
+    fillOpacity: 0.4,
+    weight: 1
+  };
+}
+
 function showMap(geojsonUrl) {
   const container = document.getElementById('map-container');
   container.style.display = '';
@@ -532,15 +601,12 @@ function showMap(geojsonUrl) {
       attribution: '&copy; OpenStreetMap contributors'
     }).addTo(map);
   }
-  // Leaflet needs a tick to measure the now-visible container
   setTimeout(() => map.invalidateSize(), 0);
-  if (geojsonLayer) { map.removeLayer(geojsonLayer); }
   fetch(geojsonUrl)
     .then(r => r.json())
     .then(data => {
-      geojsonLayer = L.geoJSON(data, {
-        style: { color: '#888', fillColor: '#aaa', fillOpacity: 0.4, weight: 1 }
-      }).addTo(map);
+      if (geojsonLayer) { map.removeLayer(geojsonLayer); }
+      geojsonLayer = L.geoJSON(data, { style: matchStyle }).addTo(map);
       map.invalidateSize();
       map.fitBounds(geojsonLayer.getBounds());
     });
@@ -550,26 +616,169 @@ function hideMap() {
   document.getElementById('map-container').style.display = 'none';
 }
 
-function updateMapColors() {
-  if (!map || !geojsonLayer) return;
-  const idProp = document.getElementById('target_id_column').value;
-  if (!idProp) return;
-  fetch('/api/matched-ids')
-    .then(r => r.json())
+// Track current map level so we know when a full reload is needed
+let mapLevel = null;
+
+function getMapViewBody() {
+  const level = getSelectedLevel();
+  const hierRows = document.querySelectorAll('#target_hierarchy_container .hierarchy-row');
+  const hierarchy = [];
+  const dissolveCols = [];
+
+  hierRows.forEach(row => {
+    const col = row.querySelector('.hier-col-select').value;
+    const label = row.querySelector('[name="target_hier_label"]').value.trim();
+    if (col && label) {
+      hierarchy.push({column: col, label: label});
+      dissolveCols.push(col);
+    }
+  });
+
+  const idCol = document.getElementById('target_id_column').value;
+  const nameCol = document.getElementById('target_name_column').value;
+
+  if (level === 'leaf') {
+    return {
+      level: 'leaf',
+      dissolve: dissolveCols.concat(nameCol ? [nameCol] : []),
+      id_col: idCol,
+      hierarchy: hierarchy,
+    };
+  } else {
+    const hierCol = hierarchy.find(h => h.label === level);
+    return {
+      level: level,
+      dissolve: hierCol ? [hierCol.column] : dissolveCols,
+      hierarchy: hierarchy,
+    };
+  }
+}
+
+function refreshMap() {
+  if (!map || document.getElementById('map-container').style.display === 'none') return;
+  const level = getSelectedLevel();
+
+  fetch('/api/dissolved/' + encodeURIComponent(level))
+    .then(r => {
+      if (!r.ok) return null;
+      return r.json();
+    })
     .then(data => {
-      const matchedIds = new Set(data.ids.map(String));
-      geojsonLayer.eachLayer(layer => {
-        const fid = String(layer.feature.properties[idProp] || '');
-        const matched = matchedIds.has(fid);
-        layer.setStyle({
-          color: matched ? '#12994a' : '#888',
-          fillColor: matched ? '#16BF59' : '#aaa',
-          fillOpacity: 0.4,
-          weight: 1
-        });
-      });
+      if (!data) return;
+      if (geojsonLayer) { map.removeLayer(geojsonLayer); }
+      geojsonLayer = L.geoJSON(data, { style: matchStyle }).addTo(map);
+      map.invalidateSize();
+      map.fitBounds(geojsonLayer.getBounds());
+      updateMapStyle();
     });
 }
+
+function updateMapStyle() {
+  if (!map || !geojsonLayer) return;
+  const body = getMapViewBody();
+
+  fetch('/api/matched-set', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body),
+  })
+  .then(r => r.json())
+  .then(data => {
+    const matchedSet = new Set(data.matched.map(v => String(v).toLowerCase()));
+    const prop = data.match_prop;
+    geojsonLayer.eachLayer(layer => {
+      const raw = layer.feature.properties[prop];
+      const val = (raw != null ? String(raw) : '').toLowerCase();
+      const matched = matchedSet.has(val);
+      layer.feature.properties._matched = matched;
+      layer.setStyle(matchStyle(layer.feature));
+    });
+  });
+}
+
+// --- Manual Match Picking ---
+let pickingMode = false;
+let selectedRefId = null;
+let selectedTargetId = null;
+let selectedRefName = null;
+let selectedTargetName = null;
+
+function enterPickingMode() {
+  pickingMode = true;
+  selectedRefId = null;
+  selectedTargetId = null;
+  document.getElementById('btn-pick-match').classList.add('d-none');
+  document.getElementById('btn-cancel-match').classList.remove('d-none');
+  document.getElementById('btn-save-match').disabled = true;
+  document.getElementById('pick-status').textContent = 'Click a row in each table to select a pair';
+  document.querySelectorAll('.unmatched-table-wrapper').forEach(w => w.classList.add('picking-mode'));
+}
+
+function exitPickingMode() {
+  pickingMode = false;
+  selectedRefId = null;
+  selectedTargetId = null;
+  document.getElementById('btn-pick-match').classList.remove('d-none');
+  document.getElementById('btn-cancel-match').classList.add('d-none');
+  document.getElementById('btn-save-match').disabled = true;
+  document.getElementById('pick-status').textContent = '';
+  document.querySelectorAll('.unmatched-table-wrapper').forEach(w => w.classList.remove('picking-mode'));
+  document.querySelectorAll('.unmatched-table-wrapper tbody tr.selected-row').forEach(r => r.classList.remove('selected-row'));
+}
+
+document.getElementById('btn-pick-match').addEventListener('click', enterPickingMode);
+document.getElementById('btn-cancel-match').addEventListener('click', exitPickingMode);
+
+document.getElementById('unmatched-ref-table').addEventListener('click', function(e) {
+  if (!pickingMode) return;
+  const row = e.target.closest('tbody tr');
+  if (!row) return;
+  this.querySelectorAll('tbody tr.selected-row').forEach(r => r.classList.remove('selected-row'));
+  row.classList.add('selected-row');
+  selectedRefId = row.cells[0].textContent;
+  selectedRefName = row.cells[1] ? row.cells[1].textContent : selectedRefId;
+  document.getElementById('btn-save-match').disabled = !(selectedRefId && selectedTargetId);
+});
+
+document.getElementById('unmatched-target-table').addEventListener('click', function(e) {
+  if (!pickingMode) return;
+  const row = e.target.closest('tbody tr');
+  if (!row) return;
+  this.querySelectorAll('tbody tr.selected-row').forEach(r => r.classList.remove('selected-row'));
+  row.classList.add('selected-row');
+  selectedTargetId = row.cells[0].textContent;
+  selectedTargetName = row.cells[1] ? row.cells[1].textContent : selectedTargetId;
+  document.getElementById('btn-save-match').disabled = !(selectedRefId && selectedTargetId);
+});
+
+document.getElementById('btn-save-match').addEventListener('click', function() {
+  if (!selectedRefId || !selectedTargetId) return;
+  const btn = this;
+  btn.disabled = true;
+  btn.textContent = 'Saving...';
+
+  fetch('/api/manual-match', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ref_id: selectedRefId, target_id: selectedTargetId, level: getSelectedLevel()})
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.error) { alert(data.error); return; }
+    const log = document.getElementById('output-log');
+    const lvl = getSelectedLevel();
+    if (lvl === 'leaf') {
+      log.textContent += '\nManual match: "' + selectedRefName + '" \u2194 "' + selectedTargetName + '"';
+    } else {
+      log.textContent += '\nManual ' + lvl + ' mapping: "' + selectedTargetName + '" \u2192 "' + selectedRefName + '" (re-run matching to apply)';
+    }
+    exitPickingMode();
+    fetchUnmatched();
+    updateMapStyle();
+  })
+  .catch(err => alert('Failed to save match: ' + err))
+  .finally(() => { btn.textContent = 'Save match'; });
+});
 
 // --- Save Config YAML ---
 document.getElementById('save_config_btn').addEventListener('click', function() {

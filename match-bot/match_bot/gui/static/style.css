@@ -298,6 +298,25 @@ label.btn-outline-primary {
   gap: 1rem;
 }
 
+/* ===== Manual Match Picking ===== */
+.picking-mode tbody tr {
+  cursor: pointer;
+}
+
+.picking-mode tbody tr:hover {
+  background-color: rgba(13, 110, 253, 0.1) !important;
+}
+
+.unmatched-table-wrapper tbody tr.selected-row {
+  background-color: rgba(13, 110, 253, 0.15) !important;
+  outline: 2px solid #0d6efd;
+  outline-offset: -2px;
+}
+
+#manual-match-toolbar {
+  padding: 0.5rem 0;
+}
+
 /* ===== Map ===== */
 #map-container {
   flex: 1;
