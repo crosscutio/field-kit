@@ -4,6 +4,8 @@ If you're working with geospatial datasets from different sources, you'll find t
 
 It uses Levenshtein distance, Soundex similarity, and the Hungarian algorithm for optimal one-to-one assignment, organized by an N-level administrative hierarchy.
 
+A reusable **gazetteer** of geocoded place names (merged GeoNames + OpenStreetMap, with a consistent geoBoundaries admin vocabulary) lives at [`gazetteer/`](gazetteer/README.md). Projects that need to forward-geocode community/village names by fuzzy matching can point at `gazetteer/out/ref_admintagged.csv` rather than rebuilding the reference. Bulk data is gitignored but kept on disk; regenerable from `gazetteer/countries.csv` plus the build scripts.
+
 ## How It Works
 
 Match-Bot takes two datasets — a **reference** list of named places and a **target** dataset — and finds the best one-to-one match between them. Matching proceeds in steps:
