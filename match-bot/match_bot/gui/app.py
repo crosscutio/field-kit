@@ -2,6 +2,8 @@
 
 import io
 import os
+import shutil
+import subprocess
 import sys
 import uuid
 import webbrowser
@@ -615,6 +617,108 @@ def create_app():
         unmatched_target_df.to_csv(unmatched_target_path, index=False)
 
         return jsonify({'ok': True})
+
+    @app.route('/api/chat', methods=['POST'])
+    def api_chat():
+        """Send a message to Claude via the Claude Code CLI."""
+        data = request.get_json()
+        if not data or not data.get('message', '').strip():
+            return jsonify({'error': 'Empty message'}), 400
+
+        message = data['message'].strip()
+
+        # Check that the claude CLI is available
+        if not shutil.which('claude'):
+            return jsonify({
+                'error': 'Claude Code CLI not found. '
+                         'Install from https://claude.ai/code'
+            }), 500
+
+        # Build context from current match state and unmatched records
+        level = data.get('level', 'leaf')
+        context_parts = []
+        sd = _get_session_dir()
+        matched_path = sd / 'output' / 'matched.csv'
+        unmatched_ref_path = sd / 'output' / 'unmatched_ref.csv'
+        unmatched_target_path = sd / 'output' / 'unmatched_target.csv'
+
+        matched_df = pd.read_csv(matched_path).fillna('') if matched_path.exists() else pd.DataFrame()
+        unmatched_ref_df = pd.read_csv(unmatched_ref_path).fillna('') if unmatched_ref_path.exists() else pd.DataFrame()
+        unmatched_target_df = pd.read_csv(unmatched_target_path).fillna('') if unmatched_target_path.exists() else pd.DataFrame()
+
+        if not matched_df.empty:
+            context_parts.append(
+                f'Current match state: {len(matched_df)} matched, '
+                f'{len(unmatched_ref_df)} unmatched reference, '
+                f'{len(unmatched_target_df)} unmatched target.'
+            )
+
+        # Include actual unmatched records at the current viewing level
+        if level != 'leaf' and not unmatched_ref_df.empty:
+            ref_col = f'_ref_{level}'
+            target_col = f'_target_{level}'
+            matched_ref_names = set(matched_df[ref_col].astype(str).unique()) if ref_col in matched_df.columns else set()
+            matched_target_names = set(matched_df[target_col].astype(str).unique()) if target_col in matched_df.columns else set()
+
+            # Check lookup for additional mappings
+            lookup_path = sd / 'output' / 'lookups' / f'{level}_lookup.csv'
+            if lookup_path.exists():
+                lk = pd.read_csv(lookup_path).fillna('')
+                mapped = lk[(lk['reference_name'].astype(str).str.strip() != '') & (lk['target_name_standardized'].astype(str).str.strip() != '')]
+                matched_target_names.update(mapped['target_name_standardized'].astype(str).unique())
+                matched_ref_names.update(mapped['reference_name'].astype(str).unique())
+
+            uref_names = sorted(set(unmatched_ref_df[ref_col].dropna().astype(str).unique()) - matched_ref_names) if ref_col in unmatched_ref_df.columns else []
+            utgt_names = sorted(set(unmatched_target_df[target_col].dropna().astype(str).unique()) - matched_target_names) if target_col in unmatched_target_df.columns else []
+
+            context_parts.append(f'The user is viewing the {level} hierarchy level.')
+            if uref_names:
+                context_parts.append(f'Unmatched reference {level} names: {", ".join(uref_names)}')
+            if utgt_names:
+                context_parts.append(f'Unmatched target {level} names: {", ".join(utgt_names)}')
+        elif level == 'leaf' and not unmatched_ref_df.empty:
+            # Include a sample of leaf-level unmatched records
+            ref_names = unmatched_ref_df['_ref_name_raw'].dropna().unique()[:30].tolist() if '_ref_name_raw' in unmatched_ref_df.columns else []
+            tgt_names = unmatched_target_df['_target_name_raw'].dropna().unique()[:30].tolist() if '_target_name_raw' in unmatched_target_df.columns else []
+            context_parts.append('The user is viewing the leaf (name) level.')
+            if ref_names:
+                context_parts.append(f'Unmatched reference names: {", ".join(str(n) for n in ref_names)}')
+            if tgt_names:
+                context_parts.append(f'Unmatched target names: {", ".join(str(n) for n in tgt_names)}')
+
+        preamble = (
+            'You are an assistant embedded in the Match-Bot GUI, a tool for '
+            'reconciling place-name datasets. Keep answers concise — the user '
+            'sees them in a small chat window. You give advice only; you '
+            'cannot execute actions. The user controls the GUI with buttons '
+            '(Run Match, Pick New Match, level dropdown, etc.). '
+            'IMPORTANT: Only reference data provided below — never invent or '
+            'guess record names. When suggesting a match based on external '
+            'knowledge (e.g. a place being renamed, merged, or reclassified), '
+            'use web search to find a supporting source and include the URL. '
+            'Do not claim a renaming or administrative change without '
+            'providing a link.'
+        )
+        if context_parts:
+            preamble += '\n\n' + '\n'.join(context_parts)
+
+        prompt = f'{preamble}\n\nUser: {message}'
+
+        try:
+            result = subprocess.run(
+                ['claude', '-p', prompt,
+                 '--allowedTools', 'WebSearch', 'WebFetch'],
+                capture_output=True, text=True, timeout=120,
+                cwd=str(Path(__file__).resolve().parent.parent.parent),
+            )
+            response = result.stdout.strip()
+            if not response and result.stderr:
+                return jsonify({'error': result.stderr.strip()}), 500
+            return jsonify({'response': response or '(no response)'})
+        except subprocess.TimeoutExpired:
+            return jsonify({'error': 'Claude took too long to respond (120s timeout).'}), 504
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
 
     return app
 

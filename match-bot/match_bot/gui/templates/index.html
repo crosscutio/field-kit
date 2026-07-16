@@ -227,6 +227,22 @@
   </div>
 </div>
 
+<!-- Chat toggle button -->
+<button id="chat-toggle" class="btn btn-primary" title="Chat with Claude">&#x1F4AC;</button>
+
+<!-- Chat window -->
+<div id="chat-window" class="d-none">
+  <div id="chat-header">
+    <span class="fw-bold">Claude Assistant</span>
+    <button id="chat-close" class="btn-close btn-close-white btn-sm" aria-label="Close"></button>
+  </div>
+  <div id="chat-messages"></div>
+  <div id="chat-input-bar">
+    <input type="text" id="chat-input" class="form-control form-control-sm" placeholder="Ask Claude..." autocomplete="off">
+    <button id="chat-send" class="btn btn-primary btn-sm">Send</button>
+  </div>
+</div>
+
 {% endblock %}
 
 {% block scripts %}
@@ -800,5 +816,84 @@ document.getElementById('save_config_btn').addEventListener('click', function() 
     })
     .catch(err => alert('Failed to save config: ' + err));
 });
+
+// --- Chatbox ---
+const chatToggle = document.getElementById('chat-toggle');
+const chatWindow = document.getElementById('chat-window');
+const chatClose = document.getElementById('chat-close');
+const chatMessages = document.getElementById('chat-messages');
+const chatInput = document.getElementById('chat-input');
+const chatSend = document.getElementById('chat-send');
+
+chatToggle.addEventListener('click', () => {
+  chatWindow.classList.toggle('d-none');
+  if (!chatWindow.classList.contains('d-none')) chatInput.focus();
+});
+chatClose.addEventListener('click', () => chatWindow.classList.add('d-none'));
+
+// Dragging
+(function() {
+  let dragging = false, offsetX = 0, offsetY = 0;
+  const header = document.getElementById('chat-header');
+  header.addEventListener('mousedown', e => {
+    if (e.target.closest('.btn-close')) return;
+    dragging = true;
+    const rect = chatWindow.getBoundingClientRect();
+    offsetX = e.clientX - rect.left;
+    offsetY = e.clientY - rect.top;
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    let x = Math.max(0, Math.min(e.clientX - offsetX, window.innerWidth - chatWindow.offsetWidth));
+    let y = Math.max(0, Math.min(e.clientY - offsetY, window.innerHeight - chatWindow.offsetHeight));
+    chatWindow.style.left = x + 'px';
+    chatWindow.style.top = y + 'px';
+    chatWindow.style.right = 'auto';
+    chatWindow.style.bottom = 'auto';
+  });
+  document.addEventListener('mouseup', () => { dragging = false; });
+})();
+
+function chatAddMessage(text, cls) {
+  const div = document.createElement('div');
+  div.className = 'chat-msg ' + cls;
+  div.innerHTML = '<div class="chat-bubble">' + text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</div>';
+  chatMessages.appendChild(div);
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+  return div;
+}
+
+function chatSendMessage() {
+  const msg = chatInput.value.trim();
+  if (!msg) return;
+  chatInput.value = '';
+  chatAddMessage(msg, 'chat-msg-user');
+  const thinking = chatAddMessage('Thinking...', 'chat-msg-thinking');
+  chatSend.disabled = true;
+
+  fetch('/api/chat', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({message: msg, level: getSelectedLevel()}),
+  })
+  .then(r => r.json())
+  .then(data => {
+    thinking.remove();
+    if (data.error) {
+      chatAddMessage('Error: ' + data.error, 'chat-msg-claude');
+    } else {
+      chatAddMessage(data.response, 'chat-msg-claude');
+    }
+  })
+  .catch(err => {
+    thinking.remove();
+    chatAddMessage('Error: ' + err, 'chat-msg-claude');
+  })
+  .finally(() => { chatSend.disabled = false; chatInput.focus(); });
+}
+
+chatSend.addEventListener('click', chatSendMessage);
+chatInput.addEventListener('keydown', e => { if (e.key === 'Enter') chatSendMessage(); });
 </script>
 {% endblock %}
