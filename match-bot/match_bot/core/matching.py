@@ -124,7 +124,16 @@ class MatchingPipeline:
 
         result['name'] = df[ds_cfg.name_column]
         result['name_raw'] = df[ds_cfg.name_column].copy()
-        result['id'] = df[ds_cfg.id_column].astype(str)
+        # Normalize IDs: strip the trailing '.0' that pandas adds when a numeric
+        # column with any NaN gets cast to string. Non-integer IDs pass through
+        # unchanged.
+        id_series = df[ds_cfg.id_column]
+        if pd.api.types.is_float_dtype(id_series):
+            result['id'] = id_series.apply(
+                lambda v: str(int(v)) if pd.notna(v) and float(v).is_integer() else str(v)
+            )
+        else:
+            result['id'] = id_series.astype(str)
 
         # Store original hierarchy values (raw) for lookup table output
         for i, level in enumerate(ds_cfg.hierarchy):

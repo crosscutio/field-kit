@@ -42,24 +42,16 @@ def run(config):
     labels = config.hierarchy_labels
 
     for i, label in enumerate(labels):
-        target_col = f'_target_{label}'
-        ref_col = f'_ref_{label}'
-
-        if result.matched.empty:
-            print(f"  No matches — skipping {label} lookup")
-            continue
-
-        if target_col not in result.matched.columns:
-            print(f"  Column {target_col} not found — skipping {label} lookup")
+        h_col = f'h{i}'
+        if h_col not in pipeline.target.columns or h_col not in pipeline.ref.columns:
+            print(f"  Column {h_col} not found — skipping {label} lookup")
             continue
 
         lookup = generate_hierarchy_lookup(
-            matched=result.matched,
-            unmatched_target=result.unmatched_target,
-            unmatched_ref=result.unmatched_ref,
+            target=pipeline.target,
+            ref=pipeline.ref,
+            level_index=i,
             level_label=label,
-            target_col=target_col,
-            ref_col=ref_col,
         )
 
         existing_path = lookups_dir / f'{label}_lookup.csv'
