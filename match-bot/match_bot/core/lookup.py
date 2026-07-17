@@ -55,85 +55,106 @@ def get_manual_matches(lookup_df: pd.DataFrame) -> Dict[str, str]:
     if lookup_df.empty:
         return {}
 
+    def _norm_id(v) -> str:
+        # Normalize numeric IDs that pandas may have read as floats (e.g. '850.0')
+        # back to the canonical string form ('850') used elsewhere in the pipeline.
+        s = str(v)
+        try:
+            f = float(s)
+            if f.is_integer():
+                return str(int(f))
+        except (ValueError, TypeError):
+            pass
+        return s
+
     manual = lookup_df[lookup_df.get('match_type', pd.Series()) == 'manual']
     result = {}
     for _, row in manual.iterrows():
         target_id = row.get('target_id', '')
         ref_id = row.get('ref_id', '')
         if pd.notna(target_id) and pd.notna(ref_id):
-            result[str(target_id)] = str(ref_id)
+            result[_norm_id(target_id)] = _norm_id(ref_id)
     return result
 
 
 def generate_hierarchy_lookup(
-    matched: pd.DataFrame,
-    unmatched_target: pd.DataFrame,
-    unmatched_ref: pd.DataFrame,
+    target: pd.DataFrame,
+    ref: pd.DataFrame,
+    level_index: int,
     level_label: str,
-    target_col: str,
-    ref_col: str,
-    target_std_col: Optional[str] = None,
 ) -> pd.DataFrame:
-    """Generate a hierarchy-level lookup table.
+    """Generate a hierarchy-level lookup table from distinct hierarchy values.
+
+    The lookup is computed from the full target and reference data at the given
+    hierarchy level — independent of leaf-level match outcomes. A target name
+    that exists (post-mapping) in the reference at the same level is recorded
+    as matched; one that does not is `no_candidate`. Reference names absent
+    from the target are recorded as `reference_only`.
 
     Args:
-        matched: DataFrame of matched records (must contain target and ref columns).
-        unmatched_target: Target records not matched at this level.
-        unmatched_ref: Reference records not matched at this level.
+        target: Pipeline target DataFrame with `h{i}` (standardized, post-mapping)
+            and `target_{label}_raw` columns.
+        ref: Pipeline reference DataFrame with `h{i}` (standardized) and
+            `ref_{label}_raw` columns.
+        level_index: Index of the hierarchy level (0 = top).
         level_label: Hierarchy level label (e.g., 'province', 'district').
-        target_col: Column name for target names in matched DataFrame.
-        ref_col: Column name for reference names in matched DataFrame.
-        target_std_col: Column for standardized target names (defaults to target_col).
 
     Returns:
-        DataFrame with columns: target_column, target_name_raw, target_name_standardized,
-        reference_name, match_type, mapping_rationale.
+        DataFrame with columns: target_column, target_name_raw,
+        target_name_standardized, reference_name, match_type, mapping_rationale.
     """
-    if target_std_col is None:
-        target_std_col = target_col
+    h_col = f'h{level_index}'
+    target_col_label = f'_target_{level_label}'
+    t_raw_col = f'target_{level_label}_raw'
+    r_raw_col = f'ref_{level_label}_raw'
+
+    def _distinct(df: pd.DataFrame, raw_col: str) -> pd.DataFrame:
+        if df is None or df.empty or h_col not in df.columns:
+            return pd.DataFrame(columns=[h_col, raw_col])
+        cols = [h_col]
+        if raw_col in df.columns:
+            cols.append(raw_col)
+        out = df[cols].dropna(subset=[h_col])
+        return out.drop_duplicates(subset=[h_col]).reset_index(drop=True)
+
+    t_pairs = _distinct(target, t_raw_col)
+    r_pairs = _distinct(ref, r_raw_col)
+
+    ref_index = {str(v).lower(): str(v) for v in r_pairs[h_col]} if not r_pairs.empty else {}
+    target_keys = {str(v).lower() for v in t_pairs[h_col]} if not t_pairs.empty else set()
 
     rows = []
-
-    # Matched entries
-    if not matched.empty:
-        seen = set()
-        for _, row in matched.iterrows():
-            t_name = str(row.get(target_col, ''))
-            r_name = str(row.get(ref_col, ''))
-            key = (t_name, r_name)
-            if key in seen:
-                continue
-            seen.add(key)
-            t_std = str(row.get(target_std_col, t_name))
+    for _, t in t_pairs.iterrows():
+        t_std = str(t[h_col])
+        t_raw = str(t.get(t_raw_col, t_std)) if t_raw_col in t_pairs.columns else t_std
+        key = t_std.lower()
+        if key in ref_index:
             rows.append({
-                'target_column': target_col,
-                'target_name_raw': t_name,
+                'target_column': target_col_label,
+                'target_name_raw': t_raw,
                 'target_name_standardized': t_std,
-                'reference_name': r_name,
-                'match_type': 'exact' if t_std.lower() == r_name.lower() else 'mapped',
+                'reference_name': ref_index[key],
+                'match_type': 'exact',
                 'mapping_rationale': '',
             })
-
-    # Unmatched target entries
-    if not unmatched_target.empty:
-        for name in unmatched_target[target_col].dropna().unique():
+        else:
             rows.append({
-                'target_column': target_col,
-                'target_name_raw': str(name),
-                'target_name_standardized': str(name),
+                'target_column': target_col_label,
+                'target_name_raw': t_raw,
+                'target_name_standardized': t_std,
                 'reference_name': '',
                 'match_type': 'no_candidate',
                 'mapping_rationale': '',
             })
 
-    # Unmatched reference entries
-    if not unmatched_ref.empty:
-        for name in unmatched_ref[ref_col].dropna().unique():
+    for _, r in r_pairs.iterrows():
+        r_std = str(r[h_col])
+        if r_std.lower() not in target_keys:
             rows.append({
                 'target_column': '',
                 'target_name_raw': '',
                 'target_name_standardized': '',
-                'reference_name': str(name),
+                'reference_name': r_std,
                 'match_type': 'reference_only',
                 'mapping_rationale': '',
             })
@@ -162,7 +183,36 @@ def generate_leaf_lookup(
         match metrics, match_type, and mapping_rationale.
     """
     hierarchy_labels = config.hierarchy_labels
+    deepest_label = hierarchy_labels[-1] if hierarchy_labels else None
+    cross_col = f'cross_{deepest_label}' if deepest_label else None
     rows = []
+
+    def _is_cross(target_val, ref_val):
+        t = '' if pd.isna(target_val) else str(target_val).strip().lower()
+        r = '' if pd.isna(ref_val) else str(ref_val).strip().lower()
+        return 'x' if t and r and t != r else ''
+
+    # Metrics helpers — used to backfill any matched row missing lev/soundex.
+    from .fuzzy import levenshtein, hamming_distance
+    try:
+        import jellyfish as _jf
+    except ImportError:
+        _jf = None
+
+    def _compute_metrics(t_name, r_name):
+        t = '' if t_name is None else str(t_name).strip()
+        r = '' if r_name is None else str(r_name).strip().lower()
+        if not t or not r:
+            return None, None, None
+        d = levenshtein(t, r)
+        score = round(d / max(len(t), 1), 3)
+        sdx = None
+        if _jf is not None:
+            try:
+                sdx = hamming_distance(_jf.soundex(t), _jf.soundex(r))
+            except Exception:
+                sdx = None
+        return d, score, sdx
 
     # Build fuzzy distance lookup if available
     fuzzy_lookup = {}
@@ -191,10 +241,33 @@ def generate_leaf_lookup(
         tid = str(row.get('_target_id', ''))
         frow = fuzzy_lookup.get(tid)
         lev_dist = row.get('_levenshtein_distance')
+        if pd.isna(lev_dist):
+            lev_dist = None
         if lev_dist is None and frow is not None:
             lev_dist = frow.get('levenshtein_distance')
+            if pd.isna(lev_dist):
+                lev_dist = None
 
         entry['match_type'] = row.get('_match_type', 'exact')
+
+        sdx = None
+        if frow is not None:
+            sdx = frow.get('soundex_distance_lev_match')
+            if pd.isna(sdx):
+                sdx = None
+
+        # Backfill any missing metric by computing directly from name strings.
+        # This ensures every matched row (including manual/forced) carries
+        # levenshtein_distance, levenshtein_score, and soundex_distance.
+        if lev_dist is None or sdx is None:
+            d2, s2, sdx2 = _compute_metrics(
+                entry['target_name_standardized'], entry['ref_name']
+            )
+            if lev_dist is None:
+                lev_dist = d2
+            if sdx is None:
+                sdx = sdx2
+
         entry['levenshtein_distance'] = lev_dist
         entry['levenshtein_score'] = None
         if lev_dist is not None and entry['target_name_standardized']:
@@ -202,12 +275,15 @@ def generate_leaf_lookup(
             if name_len > 0:
                 entry['levenshtein_score'] = round(lev_dist / name_len, 3)
 
-        sdx = None
-        if frow is not None:
-            sdx = frow.get('soundex_distance_lev_match')
         entry['soundex_distance'] = sdx
         entry['unmatched'] = ''
         entry['mapping_rationale'] = row.get('_mapping_rationale', '')
+        if cross_col:
+            entry[cross_col] = _is_cross(
+                entry.get(f'target_{deepest_label}'),
+                entry.get(f'ref_{deepest_label}'),
+            )
+        entry['forced_pass'] = ''
 
         rows.append(entry)
 
@@ -229,6 +305,9 @@ def generate_leaf_lookup(
         entry['soundex_distance'] = None
         entry['unmatched'] = 'x'
         entry['mapping_rationale'] = ''
+        if cross_col:
+            entry[cross_col] = ''
+        entry['forced_pass'] = ''
         rows.append(entry)
 
     # Unmatched reference records (reference_only)
@@ -249,6 +328,9 @@ def generate_leaf_lookup(
         entry['soundex_distance'] = None
         entry['unmatched'] = 'x'
         entry['mapping_rationale'] = ''
+        if cross_col:
+            entry[cross_col] = ''
+        entry['forced_pass'] = ''
         rows.append(entry)
 
     return pd.DataFrame(rows)
@@ -282,14 +364,26 @@ def preserve_manual_matches(new_lookup: pd.DataFrame, existing_lookup: pd.DataFr
     if manual_entries.empty:
         return result
 
+    def _norm_id(v) -> str:
+        # Float-typed IDs (e.g. '730.0' from a CSV with NaNs) compared to the
+        # pipeline's int-typed IDs ('730') would never match. Normalize.
+        s = str(v)
+        try:
+            f = float(s)
+            if f.is_integer():
+                return str(int(f))
+        except (ValueError, TypeError):
+            pass
+        return s
+
     # Try to match by target_id first, then by target_name_raw
     for _, manual_row in manual_entries.iterrows():
-        target_id = str(manual_row.get('target_id', ''))
+        target_id = _norm_id(manual_row.get('target_id', ''))
         target_name = str(manual_row.get('target_name_raw', ''))
 
         matched_idx = None
         if target_id:
-            mask = result.get('target_id', pd.Series()) == target_id
+            mask = result.get('target_id', pd.Series()).astype(str).map(_norm_id) == target_id
             if mask.any():
                 matched_idx = result[mask].index[0]
         if matched_idx is None and target_name:
@@ -298,10 +392,18 @@ def preserve_manual_matches(new_lookup: pd.DataFrame, existing_lookup: pd.DataFr
                 matched_idx = result[mask].index[0]
 
         if matched_idx is not None:
-            # Override with manual entry fields
+            # Override with manual entry fields, but only when the existing
+            # value is non-null. Otherwise NaN cells in the saved lookup would
+            # clobber freshly-computed values (e.g. lev/soundex metrics).
             for col in manual_row.index:
-                if col in result.columns:
-                    result.at[matched_idx, col] = manual_row[col]
+                if col not in result.columns:
+                    continue
+                v = manual_row[col]
+                if pd.isna(v):
+                    continue
+                if isinstance(v, str) and not v.strip():
+                    continue
+                result.at[matched_idx, col] = v
             result.at[matched_idx, 'match_type'] = 'manual'
             result.at[matched_idx, 'unmatched'] = ''
         else:

@@ -84,6 +84,21 @@ class MatchingPipeline:
         target_raw = load_dataset(str(target_path), cfg.target.format, cfg.target.layer)
         self.target = self._normalize_dataset(target_raw, cfg.target, prefix='target')
 
+        # Dissolve to matching level: if the source data is more granular than the
+        # columns selected for matching (e.g. GeoJSON at Admin4 but matching at
+        # Admin3), multiple rows will share the same id/name/hierarchy values.
+        # Deduplicate so each unique combination appears once.
+        dedup_cols = self._group_columns + ['id', 'name']
+        ref_before = len(self.ref)
+        self.ref = self.ref.drop_duplicates(subset=dedup_cols).reset_index(drop=True)
+        target_before = len(self.target)
+        self.target = self.target.drop_duplicates(subset=dedup_cols).reset_index(drop=True)
+
+        if ref_before != len(self.ref):
+            print(f"  Dissolved reference from {ref_before} to {len(self.ref)} unique records")
+        if target_before != len(self.target):
+            print(f"  Dissolved target from {target_before} to {len(self.target)} unique records")
+
         print(f"Loaded {len(self.ref)} reference records, {len(self.target)} target records")
 
     def _normalize_dataset(self, df: pd.DataFrame, ds_cfg, prefix: str) -> pd.DataFrame:
@@ -109,7 +124,16 @@ class MatchingPipeline:
 
         result['name'] = df[ds_cfg.name_column]
         result['name_raw'] = df[ds_cfg.name_column].copy()
-        result['id'] = df[ds_cfg.id_column].astype(str)
+        # Normalize IDs: strip the trailing '.0' that pandas adds when a numeric
+        # column with any NaN gets cast to string. Non-integer IDs pass through
+        # unchanged.
+        id_series = df[ds_cfg.id_column]
+        if pd.api.types.is_float_dtype(id_series):
+            result['id'] = id_series.apply(
+                lambda v: str(int(v)) if pd.notna(v) and float(v).is_integer() else str(v)
+            )
+        else:
+            result['id'] = id_series.astype(str)
 
         # Store original hierarchy values (raw) for lookup table output
         for i, level in enumerate(ds_cfg.hierarchy):

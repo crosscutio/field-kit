@@ -6,6 +6,7 @@ Usage:
     python -m match_bot match --config config.yaml
     python -m match_bot lookups --config config.yaml
     python -m match_bot suggest --config config.yaml [--threshold 70]
+    python -m match_bot gui
 """
 
 import sys
@@ -32,9 +33,12 @@ def main():
         elif subcommand == 'suggest':
             from match_bot.scripts.suggest_matches import main as suggest_main
             suggest_main()
+        elif subcommand == 'gui':
+            from match_bot.gui.app import launch_gui
+            launch_gui()
         else:
             print(f"Unknown subcommand: {subcommand}")
-            print("Available: match, lookups, suggest")
+            print("Available: match, lookups, suggest, gui")
             sys.exit(1)
     except (FileNotFoundError, ValueError) as e:
         print(f"Error: {e}", file=sys.stderr)

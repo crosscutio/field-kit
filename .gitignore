@@ -24,3 +24,6 @@ match-bot/dev/claude_references/
 # Gazetteer bulk data — regenerable from gazetteer/countries.csv; kept on disk, not in git
 match-bot/gazetteer/data/
 match-bot/gazetteer/out/
+
+# Per-user project workspace — private data, typically its own git repo (see match-bot/CLAUDE.md)
+match-bot/projects/
