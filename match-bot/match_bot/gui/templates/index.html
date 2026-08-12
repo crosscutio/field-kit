@@ -25,7 +25,7 @@
 
   <!-- Reference Dataset -->
   <div class="card">
-    <div class="card-header fw-bold">Reference Dataset</div>
+    <div class="card-header">Reference Dataset</div>
     <div class="card-body">
       <div class="mb-3">
         <label for="ref_file" class="form-label">Upload CSV</label>
@@ -54,7 +54,7 @@
 
   <!-- Target Dataset -->
   <div class="card">
-    <div class="card-header fw-bold">Target Dataset</div>
+    <div class="card-header">Target Dataset</div>
     <div class="card-body">
       <div class="mb-3">
         <label for="target_file" class="form-label">Upload File (CSV or GeoJSON)</label>
@@ -83,7 +83,7 @@
 
   <!-- Settings -->
   <div class="card">
-    <div class="card-header fw-bold">Settings</div>
+    <div class="card-header">Settings</div>
     <div class="card-body">
       <div class="row">
         <div class="col-md-6 mb-3">
@@ -121,7 +121,7 @@
 
   <!-- Config YAML -->
   <div class="card">
-    <div class="card-header fw-bold">Config YAML</div>
+    <div class="card-header">Config YAML</div>
     <div class="card-body">
       <div class="d-flex gap-2">
         <label class="btn btn-outline-primary mb-0">
@@ -135,7 +135,7 @@
 
   <!-- Run -->
   <div class="card">
-    <div class="card-header fw-bold">Run</div>
+    <div class="card-header">Run</div>
     <div class="card-body">
       <div class="d-flex flex-wrap gap-2 align-items-end">
         <button type="button" class="btn btn-primary" id="btn_match">Run Match</button>
@@ -172,7 +172,7 @@
     <!-- Unmatched Reference Records -->
     <div>
       <div class="card">
-        <div class="card-header fw-bold d-flex justify-content-between align-items-center">
+        <div class="card-header d-flex justify-content-between align-items-center">
           Unmatched Reference Records
           <span class="badge bg-secondary" id="unmatched-ref-count">0</span>
         </div>
@@ -186,7 +186,7 @@
     <!-- Unmatched Target Records -->
     <div>
       <div class="card">
-        <div class="card-header fw-bold d-flex justify-content-between align-items-center">
+        <div class="card-header d-flex justify-content-between align-items-center">
           Unmatched Target Records
           <span class="badge bg-secondary" id="unmatched-target-count">0</span>
         </div>
@@ -208,7 +208,7 @@
   <!-- Map (shown when GeoJSON target uploaded) -->
   <div id="map-container" style="display:none;">
     <div class="card" style="height:100%;">
-      <div class="card-header fw-bold">Target Map</div>
+      <div class="card-header">Target Map</div>
       <div class="card-body p-0">
         <div id="map" style="height:100%;"></div>
       </div>
@@ -220,7 +220,7 @@
 
 <!-- Output (full width below) -->
 <div class="card">
-  <div class="card-header fw-bold">Output</div>
+  <div class="card-header">Output</div>
   <div class="card-body">
     <pre id="output-log">Ready. Upload CSV files and configure your matching project above.</pre>
     <div class="mt-2" id="download-links"></div>
@@ -228,18 +228,23 @@
 </div>
 
 <!-- Chat toggle button -->
-<button id="chat-toggle" class="btn btn-primary" title="Chat with Claude">&#x1F4AC;</button>
+<button id="chat-toggle" class="btn btn-primary" title="Chat with Claude" aria-label="Chat with Claude">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+       stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/>
+  </svg>
+</button>
 
 <!-- Chat window -->
 <div id="chat-window" class="d-none">
   <div id="chat-header">
     <span class="fw-bold">Claude Assistant</span>
-    <button id="chat-close" class="btn-close btn-close-white btn-sm" aria-label="Close"></button>
+    <button id="chat-close" class="btn-close btn-sm" aria-label="Close"></button>
   </div>
   <div id="chat-messages"></div>
   <div id="chat-input-bar">
     <input type="text" id="chat-input" class="form-control form-control-sm" placeholder="Ask Claude..." autocomplete="off">
-    <button id="chat-send" class="btn btn-primary btn-sm">Send</button>
+    <button id="chat-send" class="btn btn-outline-primary btn-sm">Send</button>
   </div>
 </div>
 
@@ -598,11 +603,20 @@ function renderTable(containerId, data, countBadgeId, prefix) {
 let map = null;
 let geojsonLayer = null;
 
+// Feature colors come from the Crosscut tokens (tokens.css), read once at load.
+const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const MAP_COLORS = {
+  matchedStroke: cssVar('--green-600'),
+  matchedFill: cssVar('--viz-status-ok'),
+  unmatchedStroke: cssVar('--neutral-500'),
+  unmatchedFill: cssVar('--viz-status-none')
+};
+
 function matchStyle(feature) {
   const matched = feature.properties && feature.properties._matched;
   return {
-    color: matched ? '#12994a' : '#888',
-    fillColor: matched ? '#16BF59' : '#aaa',
+    color: matched ? MAP_COLORS.matchedStroke : MAP_COLORS.unmatchedStroke,
+    fillColor: matched ? MAP_COLORS.matchedFill : MAP_COLORS.unmatchedFill,
     fillOpacity: 0.4,
     weight: 1
   };

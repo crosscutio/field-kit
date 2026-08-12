@@ -19,6 +19,7 @@ build/
 dist/
 .DS_Store
 match-bot/instance/uploads/
+match-bot/examples/demo/ZAF_25.geojson
 match-bot/dev/claude_references/
 
 # Gazetteer bulk data — regenerable from gazetteer/countries.csv; kept on disk, not in git

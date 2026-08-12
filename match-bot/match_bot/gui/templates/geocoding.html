@@ -1,0 +1,1822 @@
+{% extends "base.html" %}
+
+{# Geocoding tab — level-ladder redesign (design 2a).
+   Every hierarchy level is the same operation: fuzzy match, review, link the
+   leftovers by hand, descend. Geocoding is that loop at the leaf level.
+   Setup lives in a modal sheet, summarised by the provenance chip strip. #}
+
+{% block body_class %}app-geocoding{% endblock %}
+
+{% block head_extra %}
+<link rel="stylesheet" href="{{ url_for('static', filename='geocoding.css') }}">
+{% endblock %}
+
+{% block chrome_left %}
+<span class="chrome-rule"></span>
+<button class="project-btn" id="project-btn" title="Project setup">
+  <span class="dot dot-brand"></span>
+  <span id="project-display">Untitled</span>
+  <span style="color:#777;font-size:9px;">&#9662;</span>
+</button>
+{% endblock %}
+
+{% block chrome_right %}
+<div class="status-pill"><span class="dot dot-idle" id="statusDot"></span><span id="statusText">Not set up yet</span></div>
+{% endblock %}
+
+{% block layout %}
+<div class="geo-app">
+
+  <!-- ===== setup strip: provenance chips ===== -->
+  <div class="strip">
+    <div class="strip-left">
+      <span class="eyebrow">Setup</span>
+      <div class="chip-wrap">
+        <button class="chip" data-act="sheet-ref" title="Reference dataset">
+          <span class="chip-badge badge-ref">R</span>
+          <span class="role">Reference</span>
+          <span class="val" id="chipRefVal">not set</span>
+        </button>
+      </div>
+      <div class="chip-wrap">
+        <button class="chip" data-act="sheet-pts" title="Points dataset">
+          <span class="chip-badge badge-pts">P</span>
+          <span class="role">Points</span>
+          <span class="val" id="chipPtsVal">not set</span>
+        </button>
+      </div>
+      <div class="chip-wrap" id="matchChipWrap">
+        <button class="chip" data-act="pop-match" id="matchChip" title="Match settings for the level you're working">
+          <span class="chip-badge badge-match">M</span>
+          <span class="role">Matching</span>
+          <span class="val" id="matchChipVal">leaf &middot; 70</span>
+        </button>
+
+        <!-- per-level match settings popover -->
+        <div class="pop hidden" id="matchPop">
+          <h4>Match settings</h4>
+          <div><span class="scope-tag">applies to <span id="popScope">leaf</span></span></div>
+          <p>Each level keeps its own threshold &mdash; a cutoff that works for
+             region names is usually wrong for facility names. Rerunning only
+             re-scores this level; links you made by hand are kept.</p>
+          <div class="pop-grid">
+            <div>
+              <div class="field-label">Threshold</div>
+              <input class="ginput mono" type="number" min="0" max="100" id="popThreshold">
+            </div>
+            <div id="popDistWrap">
+              <div class="field-label">Lev. dist</div>
+              <input class="ginput mono" type="number" min="0" max="10" id="popDist">
+            </div>
+            <div id="popScoreWrap">
+              <div class="field-label">Lev. score</div>
+              <input class="ginput mono" type="number" min="0" max="1" step="0.05" id="popLevScore">
+            </div>
+          </div>
+          <div class="effect">
+            <div class="h">At this threshold</div>
+            <div class="body" id="popEffect">&mdash;</div>
+          </div>
+          <p style="margin-top:9px;"><span class="mono" style="color:var(--text-secondary);" id="popOther"></span></p>
+          <div class="pop-foot">
+            <button class="gbtn" data-act="pop-close">Done</button>
+            <button class="gbtn gbtn-primary" data-act="pop-rerun" id="popRerun">Rerun level</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="strip-right">
+      <button class="gbtn gbtn-brand" data-act="sheet-open">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+        Full setup
+      </button>
+      <button class="gbtn gbtn-primary" data-act="run">Run match</button>
+    </div>
+  </div>
+
+  <!-- ===== level ladder ===== -->
+  <div class="ladder">
+    <span class="eyebrow">Levels</span>
+    <div class="ladder-track" id="ladder"></div>
+  </div>
+
+  <!-- ===== map + drawer ===== -->
+  <div class="map-drawer-col">
+    <div class="map-wrap">
+      <div id="map"></div>
+
+      <!-- shown while working a non-leaf level -->
+      <div class="map-scrim hidden" id="mapScrim">
+        <div class="map-scrim-card">
+          <h3>Nothing to place at this level</h3>
+          <p>You&rsquo;re linking <span class="mono" id="scrimLevel">region</span> names to
+             gazetteer names. The map comes back at the leaf level, where matches
+             become coordinates.</p>
+        </div>
+      </div>
+
+      <div class="map-tools" id="mapTools">
+        <button class="map-tool" title="Toggle basemap" data-act="map-basemap"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="1 6 8 3 16 6 23 3 23 18 16 21 8 18 1 21 1 6"/><line x1="8" y1="3" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="21"/></svg></button>
+        <button class="map-tool" title="Fit to data" data-act="map-fit"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></svg></button>
+      </div>
+
+      <div class="legend hidden" id="legend">
+        <div class="eyebrow" style="color:var(--text-secondary);margin-bottom:6px;">Points</div>
+        <div class="legend-row"><span class="swatch" style="background:var(--viz-point-gazetteer);border:1.5px solid var(--viz-point-gazetteer-stroke);"></span>Gazetteer<span class="n" id="legendGaz">0</span></div>
+        <div class="legend-row"><span class="swatch" style="background:var(--viz-point-matched);border:1.5px solid var(--viz-point-matched-stroke);"></span>Matched<span class="n" id="legendMatched">0</span></div>
+        <div class="legend-row"><span class="swatch" style="background:var(--viz-point-manual);border:1.5px solid var(--viz-point-manual-stroke);"></span>Manual pin<span class="n" id="legendManual">0</span></div>
+      </div>
+
+      <!-- leaf map-pin mode banner -->
+      <div class="placing-card hidden" id="placingCard">
+        <span>Placing <span class="who" id="placingWho"></span> &mdash; click a gazetteer point, or anywhere to drop a pin</span>
+        <button class="gbtn gbtn-sm" data-act="placing-cancel">Cancel</button>
+      </div>
+
+      <div class="log-card hidden" id="logCard"></div>
+    </div>
+
+    <div class="drawer">
+      <div class="drawer-bar">
+        <div class="drawer-title">
+          <span class="h" id="drawerH">Leaf level</span>
+          <span class="hint" id="drawerHint">Open Full setup to load your datasets</span>
+        </div>
+        <div class="drawer-actions">
+          <button class="gbtn gbtn-sm gbtn-ghost" data-act="log-toggle">Log</button>
+          <button class="gbtn gbtn-sm" data-act="export">Export &darr;</button>
+        </div>
+      </div>
+      <div class="drawer-body">
+        <div class="grid-row grid-head">
+          <span>Level</span><span>Reference value</span><span>Linked to</span><span>Method</span><span></span>
+        </div>
+        <div id="rows"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== setup sheet (opens scoped to the current level; never gated) ===== -->
+<div class="overlay overlay-sheet hidden" id="sheet">
+  <div class="gcard gcard-sheet">
+    <div class="gcard-head">
+      <div style="min-width:0;">
+        <h2>Project setup</h2>
+        <p>Opened at <span class="mono" style="color:var(--text-secondary);" id="sheetScope">leaf</span>
+           because that&rsquo;s the level you&rsquo;re working. Nothing here is gated by
+           level progress &mdash; jump anywhere.</p>
+      </div>
+      <button class="x-btn" data-act="sheet-close">&times;</button>
+    </div>
+
+    <div class="sheet-body">
+      <div class="sheet-nav">
+        <button class="nav-item" data-sec="ref"><span class="n n-todo" id="navRefDisc">1</span><span class="t"><b>Reference dataset</b><i id="navRefSub">no file yet</i></span></button>
+        <button class="nav-item" data-sec="pts"><span class="n n-todo" id="navPtsDisc">2</span><span class="t"><b>Points dataset</b><i id="navPtsSub">no points yet</i></span></button>
+        <button class="nav-item" data-sec="match" aria-current="true"><span class="n n-active">3</span><span class="t"><b>Matching</b><i>Links + per-level settings</i></span></button>
+        <button class="nav-item" data-sec="cfg"><span class="n n-todo">4</span><span class="t"><b>Config file</b><i id="navCfgSub">save &amp; reuse</i></span></button>
+      </div>
+
+      <div class="sheet-pane">
+        <!-- MATCHING -->
+        <section data-pane="match">
+          <h3 class="pane-h">Matching</h3>
+          <p class="pane-sub">One row per level, in comparison order &mdash; every level stays
+             editable, including finished ones. Hierarchy levels are compared before names,
+             so a region left unlinked keeps its facilities out of the leaf pass entirely.</p>
+          <div class="lvl-table">
+            <div class="lvl-grid lvl-grid-head">
+              <span>Level</span><span>Ref column</span><span>Points column</span><span>Thresh.</span><span></span><span></span>
+            </div>
+            <div id="lvlRows"></div>
+          </div>
+          <button type="button" class="gbtn gbtn-sm" style="margin-top:9px;" data-act="add-level">+ Add level</button>
+          <div class="note">
+            <span class="d"></span>
+            <p>Changing a level&rsquo;s <em>pairing</em> (its columns) discards the links made
+               at that level; changing only its <em>numbers</em> re-scores unresolved rows
+               and keeps your manual links.</p>
+          </div>
+          <div class="sheet-grid-4">
+            <div>
+              <div class="field-label">Case</div>
+              <select class="gselect" id="case">
+                <option value="lower" selected>lower</option>
+                <option value="upper">upper</option>
+                <option value="title">title</option>
+                <option value="">none</option>
+              </select>
+            </div>
+            <div>
+              <div class="field-label">Lev. distance (leaf)</div>
+              <input type="number" class="ginput mono" id="levenshtein_distance_threshold" value="1" min="0" max="10">
+            </div>
+            <div>
+              <div class="field-label">Lev. score (leaf)</div>
+              <input type="number" class="ginput mono" id="levenshtein_score_threshold" value="0.25" min="0" max="1" step="0.05">
+            </div>
+            <div style="display:flex;flex-direction:column;gap:4px;justify-content:flex-end;">
+              <label style="display:flex;align-items:center;gap:6px;font-size:var(--text-xs);color:var(--text-secondary);">
+                <input type="checkbox" id="remove_accents" checked> Remove accents</label>
+              <label style="display:flex;align-items:center;gap:6px;font-size:var(--text-xs);color:var(--text-secondary);">
+                <input type="checkbox" id="validate_numbers" checked> Validate numbers</label>
+            </div>
+          </div>
+        </section>
+
+        <!-- REFERENCE -->
+        <section data-pane="ref" class="hidden">
+          <h3 class="pane-h">Reference dataset</h3>
+          <p class="pane-sub">The named places you&rsquo;re geocoding. Column pairing for
+             hierarchy levels lives under Matching.</p>
+          <div class="file-card">
+            <span class="ic" id="refFileIc" style="background:var(--neutral-150);color:var(--text-muted);">&mdash;</span>
+            <span class="meta"><b id="refFileName">no file yet</b><i id="refFileMeta">CSV with one row per place</i></span>
+            <label class="gbtn" style="margin-bottom:0;">Choose CSV<input type="file" id="ref_file" accept=".csv" hidden></label>
+          </div>
+          <div class="sheet-grid-2" style="max-width:480px;">
+            <div>
+              <div class="field-label">Record ID column</div>
+              <select class="gselect mono" id="ref_id_column"><option value="">-- upload CSV first --</option></select>
+            </div>
+            <div>
+              <div class="field-label">Name column</div>
+              <select class="gselect mono" id="ref_name_column"><option value="">-- upload CSV first --</option></select>
+            </div>
+          </div>
+          <p class="pane-note-sm">The ID is carried into the output so any result traces back
+             to this file. Not used for matching.</p>
+        </section>
+
+        <!-- POINTS -->
+        <section data-pane="pts" class="hidden">
+          <h3 class="pane-h">Points dataset</h3>
+          <p class="pane-sub">Candidate locations with coordinates &mdash; a gazetteer built
+             from GeoNames and OpenStreetMap, or your own CSV.</p>
+
+          <div class="file-card">
+            <span class="ic" style="background:var(--blue-50);color:var(--blue-700);font-size:11px;font-weight:700;">P</span>
+            <span class="meta"><b id="gazDesc" style="font-family:var(--font-body);">Gazetteer</b><i id="gazMeta">pick a country, then admin areas</i></span>
+          </div>
+          <div style="display:flex;gap:8px;align-items:flex-end;margin-top:12px;flex-wrap:wrap;">
+            <div style="min-width:220px;">
+              <div class="field-label">Country</div>
+              <select class="gselect" id="gaz_country"><option value="">-- select country --</option></select>
+            </div>
+            <button type="button" class="gbtn" id="gaz-load-admin">Load admin areas</button>
+          </div>
+          <div id="gaz-admin-wrap" class="hidden">
+            <div class="gaz-admin-list" id="gaz-admin-list"></div>
+            <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;">
+              <button type="button" class="gbtn gbtn-sm" id="gaz-select-all">Select all</button>
+              <span class="pane-note-sm" style="margin-top:0;" id="gaz-preview"></span>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;margin-top:8px;">
+              <button type="button" class="gbtn gbtn-primary" id="gaz-add">Add gazetteer points</button>
+              <button type="button" class="gbtn hidden" id="gaz-remove">Remove gazetteer points</button>
+            </div>
+          </div>
+          <p class="pane-note-sm">Identifiers come from the source &mdash; <span class="mono">point_id</span>
+             is generated per place, so there is nothing to choose. Upload a CSV instead and
+             you pick its ID, name, latitude and longitude columns below.</p>
+
+          <div class="file-card">
+            <span class="ic" id="ptsFileIc" style="background:var(--neutral-150);color:var(--text-muted);">&mdash;</span>
+            <span class="meta"><b id="ptsFileName">no CSV uploaded</b><i>Optional: your own points, blended with the gazetteer if one is active</i></span>
+            <label class="gbtn" style="margin-bottom:0;">Choose CSV<input type="file" id="target_file" accept=".csv" hidden></label>
+          </div>
+          <div class="sheet-grid-4">
+            <div>
+              <div class="field-label">ID column</div>
+              <select class="gselect mono" id="target_id_column"><option value="">--</option></select>
+            </div>
+            <div>
+              <div class="field-label">Name column</div>
+              <select class="gselect mono" id="target_name_column"><option value="">--</option></select>
+            </div>
+            <div>
+              <div class="field-label">Latitude</div>
+              <select class="gselect mono" id="geo_lat_column"><option value="">--</option></select>
+            </div>
+            <div>
+              <div class="field-label">Longitude</div>
+              <select class="gselect mono" id="geo_lon_column"><option value="">--</option></select>
+            </div>
+          </div>
+        </section>
+
+        <!-- CONFIG -->
+        <section data-pane="cfg" class="hidden">
+          <h3 class="pane-h">Config file</h3>
+          <p class="pane-sub">Saves the datasets, the pairings, every level&rsquo;s settings,
+             and the crosswalk links you made by hand.</p>
+          <div style="max-width:320px;margin-top:12px;">
+            <div class="field-label">Project name</div>
+            <input type="text" class="ginput" id="project_name" value="Untitled">
+          </div>
+          <div class="file-card">
+            <span class="ic mono" style="background:var(--neutral-150);color:var(--neutral-700);font-size:9.5px;font-weight:700;">YML</span>
+            <span class="meta"><b id="cfgFileName">config.yaml</b><i id="crosswalkNote">No hand-made crosswalk links yet</i></span>
+            <label class="gbtn" style="margin-bottom:0;">Load&hellip;<input type="file" id="load_config_file" accept=".yaml,.yml" hidden></label>
+            <button type="button" class="gbtn" id="save_config_btn">Save</button>
+          </div>
+          <p class="pane-note-sm">Saved crosswalk links are reapplied when the config is
+             loaded, so a second pass over the same dataset starts with parent levels
+             already settled.</p>
+        </section>
+      </div>
+    </div>
+
+    <div class="gcard-foot" style="justify-content:flex-end;">
+      <button class="gbtn" data-act="sheet-close">Close</button>
+      <button class="gbtn gbtn-primary" data-act="sheet-close">Back to <span id="sheetBackLvl">leaf</span> level</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== name-to-name picker (parent levels) / place picker (leaf) ===== -->
+<div class="overlay overlay-picker hidden" id="picker">
+  <div class="gcard gcard-picker">
+    <div class="gcard-head">
+      <div style="min-width:0;">
+        <h2 id="pickerTitle">Link name</h2>
+        <p id="pickerHint"></p>
+      </div>
+      <button class="x-btn" data-act="picker-close">&times;</button>
+    </div>
+    <div class="picker-body">
+      <div class="picker-left">
+        <div class="h">Reference value</div>
+        <div class="ref-box"><b id="pickerName"></b><i id="pickerCtx"></i></div>
+        <p class="picker-aside" id="pickerAside"></p>
+      </div>
+      <div class="picker-right">
+        <div class="picker-bar">
+          <span class="eyebrow" style="color:var(--text-secondary);">Candidates in the gazetteer</span>
+          <input class="ginput" style="width:130px;" type="text" placeholder="Filter&hellip;" id="pickerFilter">
+        </div>
+        <div class="picker-list" id="pickerList"></div>
+      </div>
+    </div>
+    <div class="gcard-foot">
+      <span style="font-size:var(--text-xs);color:var(--text-muted);" id="pickerFoot">Pick a candidate to continue</span>
+      <div style="display:flex;gap:7px;">
+        <button class="gbtn hidden" data-act="picker-pin" id="pickerPin">Drop a pin instead</button>
+        <button class="gbtn" data-act="picker-close">Cancel</button>
+        <button class="gbtn gbtn-primary" data-act="picker-confirm" id="pickerConfirm">Link and continue</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- loading overlay -->
+<div id="loading-overlay">
+  <div class="text-center text-white">
+    <div class="spinner-border" role="status" style="width:3rem;height:3rem;">
+      <span class="visually-hidden">Running...</span>
+    </div>
+    <div class="mt-2">Running pipeline...</div>
+  </div>
+</div>
+
+<!-- chat -->
+<button id="chat-toggle" class="btn btn-primary" title="Chat with Claude" aria-label="Chat with Claude">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+       stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/>
+  </svg>
+</button>
+<div id="chat-window" class="d-none">
+  <div id="chat-header">
+    <span class="fw-bold">Claude Assistant</span>
+    <button id="chat-close" class="btn-close btn-sm" aria-label="Close"></button>
+  </div>
+  <div id="chat-messages"></div>
+  <div id="chat-input-bar">
+    <input type="text" id="chat-input" class="form-control form-control-sm" placeholder="Ask Claude..." autocomplete="off">
+    <button id="chat-send" class="btn btn-outline-primary btn-sm">Send</button>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+'use strict';
+// Every request from this tab carries mode=geo so the server works in the
+// session's geocoding/ subdirectory, isolated from the Matching tab.
+function withMode(url) {
+  return url + (url.includes('?') ? '&' : '?') + 'mode=geo';
+}
+const $ = id => document.getElementById(id);
+function escapeHtml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function escapeAttr(s) { return escapeHtml(s).replace(/"/g, '&quot;'); }
+const plural = (n, s, p) => n + ' ' + (n === 1 ? s : p);
+
+/* ============================================================
+   State. levels[] comes from /api/geo/levels; levelDefs is the
+   editable pairing list (label + ref column + points column).
+   ============================================================ */
+const S = {
+  levels: [],            // server-computed ladder state
+  level: null,           // label of the level being worked
+  thresholds: { leaf: 70 },
+  touched: {},
+  picker: null,          // {level, row}
+  candidates: [],
+  sel: null,             // selected candidate object
+  placing: null,         // {refId, name} leaf map-pin mode
+};
+const columns = { ref: [], target: [] };
+let levelDefs = [];      // [{label, refCol, targetCol}]
+let gazActive = false;
+let refFile = null;      // uploaded reference filename
+let ptsFile = null;      // uploaded points CSV filename
+let gazInfo = null;      // {country, total} after a gazetteer build
+
+function levelLabels() { return levelDefs.map(d => d.label).filter(Boolean).concat(['leaf']); }
+function threshold(lvl) {
+  if (!(lvl in S.thresholds)) S.thresholds[lvl] = 70;
+  return S.thresholds[lvl];
+}
+function levelState(lvl) { return S.levels.find(l => l.label === lvl) || null; }
+function activeLevel() {
+  const labels = S.levels.length ? S.levels.map(l => l.label) : levelLabels();
+  if (S.level && labels.includes(S.level)) return S.level;
+  for (const l of S.levels) if (l.open > 0) return l.label;
+  return labels[labels.length - 1] || 'leaf';
+}
+
+/* ---------- form data ---------- */
+function collectFormData() {
+  const fd = {
+    mode: 'geo',
+    project_name: $('project_name').value,
+    ref_id_column: $('ref_id_column').value,
+    ref_name_column: $('ref_name_column').value,
+    target_id_column: $('target_id_column').value,
+    target_name_column: $('target_name_column').value,
+    geo_lat_column: $('geo_lat_column').value,
+    geo_lon_column: $('geo_lon_column').value,
+    gaz_country: gazActive ? $('gaz_country').value : '',
+    gaz_admin1: gazActive ? checkedAdmins() : [],
+    case: $('case').value,
+    remove_accents: $('remove_accents').checked,
+    levenshtein_distance_threshold: parseInt($('levenshtein_distance_threshold').value) || 1,
+    levenshtein_score_threshold: parseFloat($('levenshtein_score_threshold').value) || 0.25,
+    validate_numbers: $('validate_numbers').checked,
+    level_thresholds: { ...S.thresholds },
+    ref_hierarchy: [],
+    target_hierarchy: [],
+  };
+  levelDefs.forEach(d => {
+    if (d.label && d.refCol) fd.ref_hierarchy.push({ column: d.refCol, label: d.label });
+    if (d.label && d.targetCol) fd.target_hierarchy.push({ column: d.targetCol, label: d.label });
+  });
+  return fd;
+}
+
+/* ---------- levels state ---------- */
+let levelsBusy = false;
+function refreshLevels(opts) {
+  opts = opts || {};
+  if (levelsBusy) return Promise.resolve();
+  levelsBusy = true;
+  return fetch(withMode('/api/geo/levels'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(collectFormData()),
+  })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) { logLine('Level state: ' + data.error); return; }
+      S.levels = data.levels || [];
+      if (opts.advance) {
+        const lvl = levelState(activeLevel());
+        if (lvl && lvl.open === 0 && lvl.label !== 'leaf') {
+          const i = S.levels.indexOf(lvl);
+          const next = S.levels.slice(i + 1).find(l => l.open > 0) || S.levels[i + 1];
+          if (next) S.level = next.label;
+        }
+      }
+      render();
+    })
+    .catch(err => console.error('Failed to fetch level state:', err))
+    .finally(() => { levelsBusy = false; });
+}
+
+/* ============================================================
+   Rendering
+   ============================================================ */
+function render() {
+  renderLadder();
+  renderRows();
+  renderChips();
+  renderPop();
+  renderLevelTable();
+  renderSheetNav();
+  renderStatus();
+  renderMapChrome();
+}
+
+function renderLadder() {
+  const track = $('ladder');
+  track.innerHTML = '';
+  const labels = S.levels.length ? S.levels.map(l => l.label) : levelLabels();
+  labels.forEach((label, i) => {
+    if (i) {
+      const sep = document.createElement('span');
+      sep.className = 'ladder-sep';
+      sep.textContent = '›';
+      track.appendChild(sep);
+    }
+    const lvl = levelState(label);
+    const el = document.createElement('button');
+    const current = label === activeLevel();
+    let cls = 'lvl', inner = '';
+    const nameHtml = '<span class="name">' + escapeHtml(label) + '</span>';
+    if (!lvl || !lvl.ran || lvl.total === 0) {
+      cls += current ? ' lvl-current' : ' lvl-idle';
+      inner = (current ? '<span class="dot dot-brand"></span>' : '') + nameHtml
+        + '<span class="why">' + (label === 'leaf' ? 'run match to score' : 'no data yet') + '</span>';
+    } else if (lvl.open === 0 && lvl.blocked === 0) {
+      cls += current ? ' lvl-current' : ' lvl-done';
+      inner = '<span class="lvl-check">✓</span>' + nameHtml
+        + '<span>all ' + lvl.total + ' linked</span>';
+    } else {
+      cls += current ? ' lvl-current' : '';
+      const noun = label === 'leaf' ? ['place to match', 'places to match'] : ['name to link', 'names to link'];
+      let count = plural(lvl.open, noun[0], noun[1]);
+      if (lvl.blocked > 0) count += ' · ' + lvl.blocked + ' waiting';
+      inner = '<span class="dot dot-brand"></span>' + nameHtml
+        + '<span class="count">' + count + '</span>';
+    }
+    el.className = cls;
+    el.innerHTML = inner;
+    el.onclick = () => { S.level = label; render(); };
+    track.appendChild(el);
+  });
+}
+
+function renderRows() {
+  const lvl = activeLevel();
+  const state = levelState(lvl);
+  const host = $('rows');
+  host.innerHTML = '';
+
+  $('drawerH').textContent = lvl === 'leaf' ? 'Leaf level' : lvl + ' level';
+  $('drawerHint').textContent = lvl === 'leaf'
+    ? 'Matches here become coordinates'
+    : 'Linking reference ' + lvl + ' names to gazetteer names';
+
+  if (!state || state.rows.length === 0) {
+    const noData = !refFile && !S.levels.some(l => l.total > 0);
+    let h, p;
+    if (noData) {
+      h = 'Nothing loaded yet';
+      p = 'Open Full setup to load a reference CSV and build a points pool, then Run match.';
+      $('drawerHint').textContent = 'Open Full setup to load your datasets';
+    } else if (lvl === 'leaf' && state && !state.ran) {
+      h = 'Not scored yet';
+      p = 'Run match to score this level. Parent levels can be linked first — leaves under unlinked parents sit out the pass.';
+    } else {
+      h = 'Nothing at this level';
+      p = 'No distinct values were found for this level in the reference file.';
+    }
+    host.innerHTML = '<div class="empty"><h3 class="neutral">' + escapeHtml(h)
+      + '</h3><p>' + escapeHtml(p) + '</p></div>';
+    return;
+  }
+
+  const allSettled = S.levels.every(l => l.ran && l.open === 0 && l.blocked === 0);
+  if (allSettled && state.rows.every(r => r.method)) {
+    const leaf = levelState('leaf');
+    const parents = S.levels.filter(l => l.label !== 'leaf')
+      .reduce((n, l) => n + l.total, 0);
+    host.innerHTML = '<div class="empty"><h3>Every level is settled</h3><p>'
+      + parents + ' parent link(s) and ' + (leaf ? leaf.total : 0)
+      + ' geocoded records. Save the config to keep the crosswalk for next time.</p></div>';
+    if (lvl !== 'leaf') return; // parent drawer shows the banner only
+  }
+
+  const ordered = state.rows.filter(r => !r.method && !r.blocked)
+    .concat(state.rows.filter(r => r.blocked))
+    .concat(state.rows.filter(r => r.method));
+
+  ordered.forEach(r => {
+    const div = document.createElement('div');
+    const rid = lvl === 'leaf' ? r.ref_id : r.key;
+    div.className = 'grid-row row' + (r.method ? '' : (r.blocked ? ' row-blocked' : ' row-open'));
+    if (r.method) {
+      div.innerHTML =
+        '<span class="lvl-tag">' + escapeHtml(lvl) + '</span>'
+        + '<span class="ref">' + escapeHtml(r.name) + '</span>'
+        + '<span class="target">' + escapeHtml(r.target || '') + '</span>'
+        + '<span><span class="method method-' + r.method + '">' + r.method
+        + (r.method === 'fuzzy' && r.score != null ? ' ' + r.score : '') + '</span></span>'
+        + '<span class="act"><button class="gbtn gbtn-sm gbtn-ghost" data-unlink="' + escapeAttr(rid) + '">Unlink</button></span>';
+    } else if (r.blocked) {
+      div.innerHTML =
+        '<span class="lvl-tag">' + escapeHtml(lvl) + '</span>'
+        + '<span class="ref">' + escapeHtml(r.name) + '</span>'
+        + '<span class="note">waiting on ' + escapeHtml(r.blocked_on || 'parent') + '</span>'
+        + '<span></span><span></span>';
+    } else {
+      const guess = r.guess != null
+        ? 'best guess <span class="mono">' + escapeHtml(r.guess) + '</span> · ' + r.guess_score
+        : 'no candidate in scope';
+      div.innerHTML =
+        '<span class="lvl-tag">' + escapeHtml(lvl) + '</span>'
+        + '<span class="ref">' + escapeHtml(r.name) + '</span>'
+        + '<span class="target guess">' + guess + '</span>'
+        + '<span><span class="method method-below">below cut</span></span>'
+        + '<span class="act"><button class="gbtn gbtn-sm gbtn-link-open" data-open="' + escapeAttr(rid) + '">'
+        + (lvl === 'leaf' ? 'Pick match' : 'Link name') + '</button></span>';
+    }
+    host.appendChild(div);
+  });
+}
+
+function renderChips() {
+  $('chipRefVal').textContent = refFile || 'not set';
+  $('chipPtsVal').textContent = gazInfo
+    ? gazInfo.country + ' gazetteer · ' + gazInfo.total
+    : (ptsFile || 'not set');
+  const lvl = activeLevel();
+  const t = threshold(lvl);
+  $('matchChipVal').textContent = lvl === 'leaf'
+    ? 'leaf · d' + $('levenshtein_distance_threshold').value + ' · '
+      + $('levenshtein_score_threshold').value + ' · ' + t
+    : lvl + ' · ' + t;
+  $('matchChip').classList.toggle('is-edited', !!S.touched[lvl]);
+  let flag = $('matchChip').querySelector('.flag');
+  if (S.touched[lvl] && !flag) {
+    flag = document.createElement('span');
+    flag.className = 'flag';
+    flag.textContent = 'edited';
+    $('matchChip').appendChild(flag);
+  } else if (!S.touched[lvl] && flag) flag.remove();
+}
+
+function renderPop() {
+  const lvl = activeLevel();
+  $('popScope').textContent = lvl;
+  $('popThreshold').value = threshold(lvl);
+  $('popDistWrap').classList.toggle('hidden', lvl !== 'leaf');
+  $('popScoreWrap').classList.toggle('hidden', lvl !== 'leaf');
+  if (lvl === 'leaf') {
+    $('popDist').value = $('levenshtein_distance_threshold').value;
+    $('popLevScore').value = $('levenshtein_score_threshold').value;
+  }
+  $('popRerun').textContent = 'Rerun ' + lvl + ' level';
+
+  const state = levelState(lvl);
+  const t = threshold(lvl);
+  let text = 'Run match to score this level first.';
+  if (state && state.ran) {
+    const pend = state.rows.filter(r => !r.method && !r.blocked && r.guess_score != null);
+    const would = pend.filter(r => r.guess_score >= t);
+    if (!state.rows.length) text = 'Nothing at this level.';
+    else if (!pend.length) text = 'Nothing left pending at this level.';
+    else if (!would.length) text = pend.length + ' pending, none scoring ' + t
+      + ' or above — they stay manual.';
+    else text = would.length + ' of ' + pend.length + ' pending would link automatically: '
+      + would.slice(0, 4).map(r => r.name + ' (' + r.guess_score + ')').join(', ')
+      + (would.length > 4 ? ', …' : '') + '.';
+  }
+  $('popEffect').textContent = text;
+  const others = levelLabels().filter(l => l !== lvl);
+  $('popOther').textContent = others.length
+    ? others.map(l => l + ' level is set to ' + threshold(l)).join(' · ') : '';
+}
+
+function renderLevelTable() {
+  const host = $('lvlRows');
+  host.innerHTML = '';
+  const current = activeLevel();
+
+  levelDefs.forEach((d, i) => {
+    const row = document.createElement('div');
+    row.className = 'lvl-grid lvl-grid-row';
+    row.dataset.current = String(d.label === current);
+    const state = levelState(d.label);
+    const status = !state || !state.total ? '—'
+      : (state.open === 0 ? 'all linked' : state.open + ' open');
+    row.innerHTML =
+      '<div style="display:flex;align-items:center;gap:6px;min-width:0;">'
+      + '<input class="ginput mono" style="width:80px;" value="' + escapeAttr(d.label) + '" data-lvl-label="' + i + '" placeholder="label">'
+      + (d.label === current ? '<span class="here-tag">here</span>' : '') + '</div>'
+      + '<select class="gselect mono" data-lvl-ref="' + i + '">' + colOptions(columns.ref, d.refCol) + '</select>'
+      + '<select class="gselect mono" data-lvl-tgt="' + i + '">' + colOptions(columns.target, d.targetCol) + '</select>'
+      + '<input class="ginput mono" type="number" min="0" max="100" value="' + threshold(d.label) + '" data-lvl-thresh="' + escapeAttr(d.label) + '">'
+      + '<div class="status"><span class="s">' + status + '</span>'
+      + '<button class="gbtn gbtn-sm" data-lvl-rerun="' + escapeAttr(d.label) + '">Rerun</button></div>'
+      + '<button class="x-btn" style="width:22px;height:22px;font-size:13px;" data-lvl-remove="' + i + '" title="Remove level">&times;</button>';
+    host.appendChild(row);
+  });
+
+  const leafState = levelState('leaf');
+  const leafStatus = !leafState || !leafState.ran ? 'not run yet'
+    : (leafState.open === 0 ? 'all linked'
+      : leafState.open + ' open' + (leafState.blocked ? ' · ' + leafState.blocked + ' waiting' : ''));
+  const leaf = document.createElement('div');
+  leaf.className = 'lvl-grid lvl-grid-row';
+  leaf.dataset.current = String(current === 'leaf');
+  leaf.innerHTML =
+    '<div style="display:flex;align-items:center;gap:6px;"><span class="mono" style="font-size:var(--text-xs);color:var(--text-strong);">leaf</span>'
+    + (current === 'leaf' ? '<span class="here-tag">here</span>' : '') + '</div>'
+    + '<span class="mono" style="font-size:var(--text-xs);color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;">'
+    + escapeHtml(($('ref_name_column').value || '?') + ' ↔ ' + ($('target_name_column').value || '?')) + '</span>'
+    + '<span style="font-size:var(--text-xs);color:var(--text-muted);">names → coordinates</span>'
+    + '<input class="ginput mono" type="number" min="0" max="100" value="' + threshold('leaf') + '" data-lvl-thresh="leaf">'
+    + '<div class="status"><span class="s">' + leafStatus + '</span>'
+    + '<button class="gbtn gbtn-sm" data-lvl-rerun="leaf"' + (!leafState || !leafState.ran ? ' disabled' : '') + '>Rerun</button></div>'
+    + '<span></span>';
+  host.appendChild(leaf);
+}
+
+function colOptions(cols, selected) {
+  let html = '<option value="">--</option>';
+  cols.forEach(c => {
+    html += '<option value="' + escapeAttr(c) + '"' + (c === selected ? ' selected' : '') + '>' + escapeHtml(c) + '</option>';
+  });
+  if (selected && !cols.includes(selected)) {
+    html += '<option value="' + escapeAttr(selected) + '" selected>' + escapeHtml(selected) + '</option>';
+  }
+  return html;
+}
+
+function renderSheetNav() {
+  const refDone = !!refFile && $('ref_id_column').value && $('ref_name_column').value;
+  const ptsDone = gazActive || (!!ptsFile && $('target_id_column').value);
+  setDisc('navRefDisc', refDone);
+  setDisc('navPtsDisc', ptsDone);
+  $('navRefSub').textContent = refFile || 'no file yet';
+  $('navPtsSub').textContent = gazInfo
+    ? gazInfo.total + ' points' : (ptsFile || 'no points yet');
+  $('navCfgSub').textContent = cfgName();
+  $('cfgFileName').textContent = cfgName();
+  $('sheetScope').textContent = activeLevel();
+  $('sheetBackLvl').textContent = activeLevel();
+
+  const manual = S.levels.filter(l => l.label !== 'leaf')
+    .reduce((n, l) => n + l.rows.filter(r => r.method === 'manual' || r.method === 'fuzzy').length, 0);
+  $('crosswalkNote').textContent = manual === 0
+    ? 'No hand-made crosswalk links yet'
+    : plural(manual, 'parent link', 'parent links') + ' saved as a crosswalk';
+}
+
+function setDisc(id, done) {
+  const el = $(id);
+  el.className = 'n ' + (done ? 'n-done' : 'n-todo');
+  if (done) el.innerHTML = '&#10003;';
+  else el.textContent = el.textContent.replace('✓', '') || el.textContent;
+}
+
+function cfgName() {
+  return ($('project_name').value || 'config').replace(/[^a-zA-Z0-9_-]/g, '_') + '.yaml';
+}
+
+function renderStatus() {
+  const dot = $('statusDot'), text = $('statusText');
+  $('project-display').textContent = $('project_name').value || 'Untitled';
+  if (!S.levels.length || S.levels.every(l => !l.total)) {
+    dot.className = 'dot dot-idle';
+    text.textContent = refFile ? 'Ready to run' : 'Not set up yet';
+    return;
+  }
+  const allDone = S.levels.every(l => l.ran && l.open === 0 && l.blocked === 0);
+  if (allDone) {
+    dot.className = 'dot dot-ok';
+    text.textContent = 'All levels settled';
+    return;
+  }
+  dot.className = 'dot dot-idle';
+  const first = S.levels.find(l => l.open > 0 || l.blocked > 0);
+  if (first) {
+    const left = first.open + first.blocked;
+    text.textContent = first.label === 'leaf'
+      ? plural(left, 'place left', 'places left')
+      : plural(left, first.label + ' left', first.label + 's left');
+  } else {
+    const leaf = levelState('leaf');
+    text.textContent = leaf && !leaf.ran ? 'Run match to score' : 'Working…';
+  }
+}
+
+function renderMapChrome() {
+  const lvl = activeLevel();
+  const onLeaf = lvl === 'leaf';
+  $('mapScrim').classList.toggle('hidden', onLeaf);
+  $('scrimLevel').textContent = lvl;
+  $('mapTools').classList.toggle('hidden', !onLeaf);
+  $('legend').classList.toggle('hidden', !onLeaf || !pointsLayer);
+  if (map) setTimeout(() => map.invalidateSize(), 60);
+}
+
+/* ============================================================
+   Picker
+   ============================================================ */
+function openPicker(rowId) {
+  const lvl = activeLevel();
+  const state = levelState(lvl);
+  if (!state) return;
+  const row = state.rows.find(r => (lvl === 'leaf' ? r.ref_id : r.key) === rowId);
+  if (!row) return;
+  S.picker = { level: lvl, row: row };
+  S.candidates = [];
+  S.sel = null;
+  renderPicker();
+
+  const body = collectFormData();
+  body.level = lvl;
+  if (lvl === 'leaf') body.ref_id = row.ref_id; else body.ref_key = row.key;
+  fetch(withMode('/api/geo/level/candidates'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) { alert(data.error); return; }
+      S.candidates = data.candidates || [];
+      const open = S.candidates.filter(c => !c.linked);
+      S.sel = open.length ? open[0] : null;   // pre-seed to the best guess
+      renderPicker();
+    })
+    .catch(err => alert('Failed to load candidates: ' + err));
+}
+
+function renderPicker() {
+  const p = S.picker;
+  $('picker').classList.toggle('hidden', !p);
+  if (!p) return;
+  const isParent = p.level !== 'leaf';
+  $('pickerTitle').textContent = (isParent ? 'Link ' + p.level + ' — ' : 'Match place — ') + p.row.name;
+  $('pickerHint').textContent = isParent
+    ? 'Nothing scored above the threshold, so this one needs a decision. Whatever you choose is saved as a crosswalk entry and reused on the next run.'
+    : 'Choose a gazetteer place, or drop a pin on the map instead.';
+  $('pickerName').textContent = p.row.name;
+  const state = levelState(p.level);
+  $('pickerCtx').textContent = 'reference · ' + p.level
+    + (state ? ' · ' + state.total + ' values' : '');
+  $('pickerAside').textContent = isParent
+    ? 'Nothing here is a coordinate — at this level you are deciding which gazetteer name means the same place.'
+    : 'Picking here writes coordinates into the output.';
+  $('pickerConfirm').textContent = isParent ? 'Link and continue' : 'Save match';
+  $('pickerPin').classList.toggle('hidden', isParent);
+  $('pickerFoot').textContent = S.sel ? 'Linking to ' + S.sel.name : 'Pick a candidate to continue';
+  $('pickerConfirm').disabled = !S.sel;
+
+  const filter = ($('pickerFilter').value || '').toLowerCase();
+  const host = $('pickerList');
+  host.innerHTML = '';
+  const shown = S.candidates.filter(c => !filter || c.name.toLowerCase().includes(filter));
+  if (!shown.length) {
+    host.innerHTML = '<div class="picker-empty">'
+      + (S.candidates.length ? 'No candidates match the filter.'
+        : 'No candidates in scope — the gazetteer has nothing under this parent.')
+      + '</div>';
+    return;
+  }
+  shown.forEach(c => {
+    const b = document.createElement('button');
+    b.className = 'cand';
+    b.setAttribute('aria-selected', String(!!S.sel && S.sel.name === c.name));
+    b.dataset.cand = c.name;
+    b.innerHTML = '<span class="radio"></span><span class="t"><b>' + escapeHtml(c.name)
+      + '</b><i>' + escapeHtml(c.meta || '') + (c.linked ? ' · already linked' : '') + '</i></span>'
+      + '<span class="score">' + c.score + '</span>';
+    host.appendChild(b);
+  });
+}
+
+function confirmPicker() {
+  const p = S.picker;
+  if (!p || !S.sel) return;
+  if (p.level === 'leaf') {
+    if (!S.sel.latitude || !S.sel.longitude) {
+      alert('This candidate has no coordinates — drop a pin instead.');
+      return;
+    }
+    const body = collectFormData();
+    body.ref_id = p.row.ref_id;
+    body.target_id = S.sel.target_id;
+    body.latitude = S.sel.latitude;
+    body.longitude = S.sel.longitude;
+    fetch(withMode('/api/geo/manual-match'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (data.error) { alert(data.error); return; }
+        logLine('Geocoded "' + p.row.name + '" → ' + S.sel.name);
+        closePicker();
+        refreshPoints();
+        refreshLevels({ advance: true });
+      })
+      .catch(err => alert('Failed to save match: ' + err));
+  } else {
+    const body = collectFormData();
+    body.level = p.level;
+    body.ref_key = p.row.key;
+    body.target = S.sel.name;
+    body.target_std = S.sel.std || S.sel.name;
+    fetch(withMode('/api/geo/level/link'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (data.error) { alert(data.error); return; }
+        logLine('Linked ' + p.level + ' "' + p.row.name + '" → ' + S.sel.name
+          + (data.dropped_children ? ' (' + data.dropped_children + ' leaf link(s) under the old parent dropped)' : ''));
+        closePicker();
+        refreshLevels({ advance: true });
+      })
+      .catch(err => alert('Failed to link: ' + err));
+  }
+}
+
+function closePicker() {
+  S.picker = null;
+  S.sel = null;
+  S.candidates = [];
+  $('pickerFilter').value = '';
+  renderPicker();
+}
+
+function unlinkRow(rowId) {
+  const lvl = activeLevel();
+  if (lvl === 'leaf') {
+    const body = collectFormData();
+    body.ref_id = rowId;
+    fetch(withMode('/api/geo/unmatch'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (data.error) { alert(data.error); return; }
+        refreshPoints();
+        refreshLevels();
+      })
+      .catch(err => alert('Failed to unlink: ' + err));
+  } else {
+    const body = collectFormData();
+    body.level = lvl;
+    body.ref_key = rowId;
+    fetch(withMode('/api/geo/level/unlink'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (data.error) { alert(data.error); return; }
+        if (data.dropped_children) {
+          logLine(data.dropped_children + ' leaf link(s) under "' + rowId + '" dropped — relink the parent, then rerun the leaf level.');
+        }
+        refreshPoints();
+        refreshLevels();
+      })
+      .catch(err => alert('Failed to unlink: ' + err));
+  }
+}
+
+function rerunLevel(lvl) {
+  const body = collectFormData();
+  body.level = lvl;
+  body.threshold = threshold(lvl);
+  fetch(withMode('/api/geo/level/rerun'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) { alert(data.error); return; }
+      S.touched[lvl] = false;
+      logLine('Rerun ' + lvl + ': ' + data.linked + ' linked automatically, ' + data.open + ' still open.');
+      closePop();
+      refreshPoints();
+      refreshLevels({ advance: true });
+    })
+    .catch(err => alert('Rerun failed: ' + err));
+}
+
+/* ============================================================
+   Uploads & columns
+   ============================================================ */
+$('ref_file').addEventListener('change', e => uploadCSV(e, 'ref'));
+$('target_file').addEventListener('change', e => uploadCSV(e, 'target'));
+
+function uploadCSV(event, prefix) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('prefix', prefix);
+  formData.append('mode', 'geo');
+
+  fetch('/api/columns', { method: 'POST', body: formData })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) { alert(data.error); return; }
+      if (data.needs_reblend) {
+        // A gazetteer pool exists: the upload was stashed as user points.
+        logLine('Uploaded "' + data.filename + '" — click "Update gazetteer points" '
+          + 'to blend it with the gazetteer (map your columns first).');
+        ['target_id_column', 'target_name_column', 'geo_lat_column', 'geo_lon_column']
+          .forEach(id => { $(id).disabled = false; });
+        gazActive = false;
+        columns[prefix] = data.columns;
+        ptsFile = data.filename;
+        populateSelect('target_id_column', data.columns);
+        populateSelect('target_name_column', data.columns);
+        populateLatLon(data.columns);
+        gazActive = true;
+        render();
+        return;
+      }
+      columns[prefix] = data.columns;
+      if (prefix === 'ref') {
+        refFile = data.filename;
+        $('refFileName').textContent = data.filename;
+        $('refFileMeta').textContent = data.columns.length + ' columns';
+        $('refFileIc').style.background = 'var(--green-50)';
+        $('refFileIc').style.color = 'var(--green-700)';
+        $('refFileIc').innerHTML = '&#10003;';
+        populateSelect('ref_id_column', data.columns);
+        populateSelect('ref_name_column', data.columns);
+      } else {
+        ptsFile = data.filename;
+        $('ptsFileName').textContent = data.filename;
+        $('ptsFileIc').style.background = 'var(--green-50)';
+        $('ptsFileIc').style.color = 'var(--green-700)';
+        $('ptsFileIc').innerHTML = '&#10003;';
+        populateSelect('target_id_column', data.columns);
+        populateSelect('target_name_column', data.columns);
+        populateLatLon(data.columns);
+        mapFitted = false;
+        refreshPoints();
+      }
+      render();
+      refreshLevels();
+    })
+    .catch(err => alert('Upload failed: ' + err));
+}
+
+function populateSelect(id, cols) {
+  const sel = $(id);
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">--</option>';
+  cols.forEach(c => {
+    const opt = document.createElement('option');
+    opt.value = c;
+    opt.textContent = c;
+    sel.appendChild(opt);
+  });
+  if (prev && cols.includes(prev)) sel.value = prev;
+}
+
+function populateLatLon(cols) {
+  const guesses = {
+    geo_lat_column: /^(lat|latitude|y|lat_dd)$/i,
+    geo_lon_column: /^(lon|lng|long|longitude|x|lon_dd)$/i,
+  };
+  Object.entries(guesses).forEach(([id, pattern]) => {
+    populateSelect(id, cols);
+    const sel = $(id);
+    if (!sel.value) {
+      const guess = cols.find(c => pattern.test(c.trim()));
+      if (guess) sel.value = guess;
+    }
+  });
+}
+
+function setSelectValue(id, value) {
+  const sel = $(id);
+  if (!Array.from(sel.options).some(o => o.value === value)) {
+    const opt = document.createElement('option');
+    opt.value = value;
+    opt.textContent = value;
+    sel.appendChild(opt);
+  }
+  sel.value = value;
+}
+
+['ref_id_column', 'ref_name_column', 'target_id_column', 'target_name_column'].forEach(id => {
+  $(id).addEventListener('change', () => { render(); refreshLevels(); });
+});
+$('geo_lat_column').addEventListener('change', refreshPoints);
+$('geo_lon_column').addEventListener('change', refreshPoints);
+$('project_name').addEventListener('input', renderStatus);
+
+/* ============================================================
+   Gazetteer
+   ============================================================ */
+function logLine(text) {
+  const card = $('logCard');
+  card.textContent += (card.textContent ? '\n' : '') + text;
+  card.scrollTop = card.scrollHeight;
+}
+
+fetch(withMode('/api/geo/gazetteer/countries'))
+  .then(r => r.json())
+  .then(data => {
+    const sel = $('gaz_country');
+    (data.countries || []).forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c.iso3;
+      opt.textContent = c.name;
+      sel.appendChild(opt);
+    });
+  })
+  .catch(() => {});
+
+function loadGazAdmin() {
+  const iso3 = $('gaz_country').value;
+  if (!iso3) { alert('Select a country first'); return Promise.resolve(false); }
+  const btn = $('gaz-load-admin');
+  btn.disabled = true;
+  btn.textContent = 'Loading...';
+  return fetch(withMode('/api/geo/gazetteer/admin1'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ iso3: iso3, mode: 'geo' }),
+  })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) { alert(data.error); return false; }
+      const list = $('gaz-admin-list');
+      list.innerHTML = '';
+      data.admin1.forEach((name, i) => {
+        const div = document.createElement('div');
+        div.innerHTML = '<label><input type="checkbox" class="gaz-admin-check" value="'
+          + escapeAttr(name) + '"> ' + escapeHtml(name) + '</label>';
+        list.appendChild(div);
+      });
+      $('gaz-admin-wrap').classList.remove('hidden');
+      $('gaz-preview').textContent = data.admin1.length + ' admin areas' + (data.cached ? ' (cached)' : '');
+      return true;
+    })
+    .catch(err => { alert('Failed to load admin areas: ' + err); return false; })
+    .finally(() => { btn.disabled = false; btn.textContent = 'Load admin areas'; });
+}
+
+$('gaz-load-admin').addEventListener('click', loadGazAdmin);
+
+$('gaz-select-all').addEventListener('click', () => {
+  const boxes = document.querySelectorAll('.gaz-admin-check');
+  const allChecked = Array.from(boxes).every(b => b.checked);
+  boxes.forEach(b => { b.checked = !allChecked; });
+  schedulePreview();
+});
+
+function checkedAdmins() {
+  return Array.from(document.querySelectorAll('.gaz-admin-check:checked')).map(b => b.value);
+}
+
+let previewTimer = null;
+function schedulePreview() {
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(runPreview, 400);
+}
+$('gaz-admin-list').addEventListener('change', schedulePreview);
+
+function runPreview() {
+  const iso3 = $('gaz_country').value;
+  const admins = checkedAdmins();
+  const out = $('gaz-preview');
+  if (!iso3 || admins.length === 0) { out.textContent = ''; return; }
+  out.textContent = 'counting…';
+  fetch(withMode('/api/geo/gazetteer/preview'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ iso3: iso3, admin1: admins, mode: 'geo' }),
+  })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) { out.textContent = data.error; return; }
+      out.textContent = '≈' + data.geonames_count.toLocaleString() + ' GeoNames places in '
+        + data.admin_count + ' area(s), plus OSM places fetched on Add'
+        + (data.warning ? ' — ' + data.warning : '');
+    })
+    .catch(err => { out.textContent = 'Preview failed: ' + err; });
+}
+
+$('gaz-add').addEventListener('click', async function () {
+  const iso3 = $('gaz_country').value;
+  if (!iso3) { alert('Select a country first'); return; }
+  let admins = checkedAdmins();
+  const allBoxes = document.querySelectorAll('.gaz-admin-check');
+  if (admins.length === 0) {
+    if (!confirm('No admin areas checked — add the WHOLE country ('
+      + allBoxes.length + ' areas)? Large countries can be slow.')) return;
+    admins = Array.from(allBoxes).map(b => b.value);
+  }
+  const btn = this;
+  btn.disabled = true;
+  btn.textContent = 'Fetching...';
+  $('logCard').classList.remove('hidden');
+  const skipOsm = [];
+  try {
+    for (let i = 0; i < admins.length; i++) {
+      const name = admins[i];
+      try {
+        const r = await fetch(withMode('/api/geo/gazetteer/fetch-osm'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ iso3: iso3, admin1: name, mode: 'geo' }),
+        });
+        const data = await r.json();
+        if (data.error) throw new Error(data.error);
+        logLine('OSM ' + name + ': ' + data.count + ' places (' + (i + 1) + '/'
+          + admins.length + ')' + (data.cached ? ' (cached)' : ''));
+      } catch (err) {
+        // Never abort the build on a single area's OSM failure — degrade to
+        // GeoNames-only for that area.
+        skipOsm.push(name);
+        logLine('WARNING: OSM unavailable for ' + name + ' (' + err.message
+          + ') — continuing with GeoNames only for this area.');
+      }
+    }
+
+    const body = collectFormData();
+    body.iso3 = iso3;
+    body.admin1 = admins;
+    body.skip_osm_admins = skipOsm;
+    const r = await fetch(withMode('/api/geo/gazetteer/build'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await r.json();
+    if (data.error) { alert(data.error); return; }
+    (data.log || []).forEach(logLine);
+    applyGazetteerPreset(data, iso3);
+    if (skipOsm.length > 0) {
+      logLine('OSM was skipped for ' + skipOsm.length + ' area(s): ' + skipOsm.join(', ')
+        + ' — click "Update gazetteer points" later to retry (cached areas are free).');
+    }
+    if (data.oom_warning) logLine('WARNING: ' + data.oom_warning);
+    $('gaz-remove').classList.remove('hidden');
+    mapFitted = false;
+    refreshPoints();
+    refreshLevels();
+  } finally {
+    btn.disabled = false;
+    btn.textContent = gazActive ? 'Update gazetteer points' : 'Add gazetteer points';
+  }
+});
+
+function applyGazetteerPreset(data, iso3) {
+  gazActive = true;
+  gazInfo = { country: iso3, total: (data.counts || {}).total || 0 };
+  columns.target = data.columns;
+  populateSelect('target_id_column', data.columns);
+  populateSelect('target_name_column', data.columns);
+  populateLatLon(data.columns);
+  const preset = data.preset || {};
+  ['target_id_column', 'target_name_column', 'geo_lat_column', 'geo_lon_column'].forEach(id => {
+    if (preset[id]) setSelectValue(id, preset[id]);
+    $(id).disabled = true;
+  });
+  $('gazDesc').textContent = iso3 + ' gazetteer';
+  $('gazMeta').textContent = gazInfo.total + ' points — generated schema; remove gazetteer points to edit columns';
+  // Offer the admin1 pairing if no level configured yet
+  if (levelDefs.length === 0 && preset.suggested_hierarchy) {
+    preset.suggested_hierarchy.forEach(h => {
+      levelDefs.push({ label: h.label, refCol: '', targetCol: h.column });
+    });
+    logLine('Added a "' + preset.suggested_hierarchy[0].label
+      + '" level paired to the gazetteer’s admin1 — pick its reference column under Matching.');
+  }
+  $('gaz-add').textContent = 'Update gazetteer points';
+  render();
+  refreshLevels();
+}
+
+$('gaz-remove').addEventListener('click', function () {
+  fetch(withMode('/api/geo/gazetteer/clear'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode: 'geo' }),
+  })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) { alert(data.error); return; }
+      gazActive = false;
+      gazInfo = null;
+      ['target_id_column', 'target_name_column', 'geo_lat_column', 'geo_lon_column'].forEach(id => {
+        $(id).disabled = false;
+      });
+      this.classList.add('hidden');
+      $('gaz-add').textContent = 'Add gazetteer points';
+      $('gazDesc').textContent = 'Gazetteer';
+      $('gazMeta').textContent = 'pick a country, then admin areas';
+      if (data.restored && data.columns) {
+        columns.target = data.columns;
+        populateSelect('target_id_column', data.columns);
+        populateSelect('target_name_column', data.columns);
+        populateLatLon(data.columns);
+        logLine('Gazetteer points removed; your uploaded CSV is restored — reselect columns.');
+      } else {
+        columns.target = [];
+        ptsFile = null;
+        $('ptsFileName').textContent = 'no CSV uploaded';
+        populateSelect('target_id_column', []);
+        populateSelect('target_name_column', []);
+        logLine('Gazetteer points removed.');
+      }
+      if (map && pointsLayer) { map.removeLayer(pointsLayer); pointsLayer = null; pointMarkers = {}; }
+      mapFitted = false;
+      refreshPoints();
+      refreshLevels();
+    })
+    .catch(err => alert('Failed to remove gazetteer points: ' + err));
+});
+
+/* ============================================================
+   Run pipeline
+   ============================================================ */
+function runPipeline() {
+  cancelPlacing();
+  const overlay = $('loading-overlay');
+  overlay.classList.add('active');
+  const formData = collectFormData();
+
+  fetch(withMode('/api/run/match'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(formData),
+  })
+    .then(r => r.json())
+    .then(data => {
+      overlay.classList.remove('active');
+      if (data.error) {
+        logLine('ERROR: ' + data.error);
+        $('logCard').classList.remove('hidden');
+        alert(data.error);
+        return;
+      }
+      (data.output || 'Done.').split('\n').forEach(l => { if (l.trim()) logLine(l); });
+      mapFitted = false;
+      refreshPoints();
+      refreshLevels({ advance: true });
+    })
+    .catch(err => {
+      overlay.classList.remove('active');
+      logLine('ERROR: ' + err);
+      alert(err);
+    });
+}
+
+function exportGeocoded() {
+  const leaf = levelState('leaf');
+  if (!leaf || !leaf.ran) { alert('Run match first — there is nothing to export yet.'); return; }
+  window.location.href = withMode('/api/download/output/geocoded.csv');
+}
+
+/* ============================================================
+   Config YAML
+   ============================================================ */
+$('load_config_file').addEventListener('change', function () {
+  const file = this.files[0];
+  if (!file) return;
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('mode', 'geo');
+
+  fetch(withMode('/api/load-config'), { method: 'POST', body: formData })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) { alert(data.error); return; }
+      const fd = data.form_data;
+      $('project_name').value = fd.project_name || '';
+      $('case').value = fd.case || 'lower';
+      $('remove_accents').checked = fd.remove_accents !== false;
+      $('levenshtein_distance_threshold').value = fd.levenshtein_distance_threshold || 1;
+      $('levenshtein_score_threshold').value = fd.levenshtein_score_threshold || 0.25;
+      $('validate_numbers').checked = fd.validate_numbers !== false;
+      if (fd.level_thresholds) S.thresholds = { leaf: 70, ...fd.level_thresholds };
+
+      if (fd.ref_id_column) setSelectValue('ref_id_column', fd.ref_id_column);
+      if (fd.ref_name_column) setSelectValue('ref_name_column', fd.ref_name_column);
+      if (fd.target_id_column) setSelectValue('target_id_column', fd.target_id_column);
+      if (fd.target_name_column) setSelectValue('target_name_column', fd.target_name_column);
+      if (fd.geo_lat_column) setSelectValue('geo_lat_column', fd.geo_lat_column);
+      if (fd.geo_lon_column) setSelectValue('geo_lon_column', fd.geo_lon_column);
+
+      // Rebuild the level pairing list from the two hierarchies (paired by label)
+      levelDefs = (fd.ref_hierarchy || []).map(h => {
+        const tgt = (fd.target_hierarchy || []).find(t => t.label === h.label) || {};
+        return { label: h.label, refCol: h.column, targetCol: tgt.column || '' };
+      });
+
+      logLine('Config loaded from ' + file.name
+        + (data.crosswalk_restored ? ' — ' + data.crosswalk_restored + ' crosswalk link(s) restored' : ''));
+      $('logCard').classList.remove('hidden');
+
+      if (fd.gaz_country) {
+        setSelectValue('gaz_country', fd.gaz_country);
+        loadGazAdmin().then(ok => {
+          if (!ok) return;
+          const wanted = new Set(fd.gaz_admin1 || []);
+          document.querySelectorAll('.gaz-admin-check').forEach(b => {
+            b.checked = wanted.has(b.value);
+          });
+          schedulePreview();
+          logLine('Gazetteer selection restored (' + fd.gaz_country + ') — click '
+            + '"Add gazetteer points" to fetch and build.');
+        });
+      }
+      render();
+      refreshLevels();
+    })
+    .catch(err => alert('Failed to load config: ' + err));
+  this.value = '';
+});
+
+$('save_config_btn').addEventListener('click', function () {
+  const formData = collectFormData();
+  fetch(withMode('/api/save-config'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(formData),
+  })
+    .then(r => r.blob())
+    .then(blob => {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = cfgName();
+      a.click();
+      URL.revokeObjectURL(url);
+    })
+    .catch(err => alert('Failed to save config: ' + err));
+});
+
+/* ============================================================
+   Map
+   ============================================================ */
+let map = null;
+let pointsLayer = null;
+let pointMarkers = {};
+let mapFitted = false;
+let basemapDark = false;
+let tileLayer = null;
+
+const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const STYLE_GAZ = () => ({ color: cssVar('--viz-point-gazetteer-stroke'), fillColor: cssVar('--viz-point-gazetteer'), radius: 4.5, weight: 1.2, fillOpacity: .8 });
+const STYLE_MATCHED = () => ({ color: cssVar('--viz-point-matched-stroke'), fillColor: cssVar('--viz-point-matched'), radius: 6, weight: 1.6, fillOpacity: .9 });
+const STYLE_MANUAL = () => ({ color: cssVar('--viz-point-manual-stroke'), fillColor: cssVar('--viz-point-manual'), radius: 6, weight: 1.6, fillOpacity: .9 });
+
+function pointStyle(props) {
+  if (props._manual) return STYLE_MANUAL();
+  if (props._matched) return STYLE_MATCHED();
+  return STYLE_GAZ();
+}
+
+const TILES = {
+  light: { url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', opts: { subdomains: 'abcd', maxZoom: 19, attribution: '&copy; OpenStreetMap contributors &copy; CARTO' } },
+  osm: { url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', opts: { attribution: '&copy; OpenStreetMap contributors' } },
+};
+
+function ensureMap() {
+  if (map) return;
+  map = L.map('map', { preferCanvas: true, zoomControl: false });
+  tileLayer = L.tileLayer(TILES.light.url, TILES.light.opts).addTo(map);
+  L.control.zoom({ position: 'bottomright' }).addTo(map);
+  map.setView([0, 0], 2);
+  map.on('click', onMapClick);
+}
+ensureMap();
+
+function refreshPoints() {
+  const idCol = $('target_id_column').value;
+  const latCol = $('geo_lat_column').value;
+  const lonCol = $('geo_lon_column').value;
+  if (!idCol || !latCol || !lonCol) return;
+  const params = new URLSearchParams({
+    id_col: idCol,
+    name_col: $('target_name_column').value,
+    lat_col: latCol,
+    lon_col: lonCol,
+    ref_id_col: $('ref_id_column').value,
+    ref_name_col: $('ref_name_column').value,
+  });
+  fetch(withMode('/api/geo/points?' + params))
+    .then(r => r.json())
+    .then(fc => {
+      if (fc.error) return;
+      ensureMap();
+      if (pointsLayer) map.removeLayer(pointsLayer);
+      pointMarkers = {};
+      let nGaz = 0, nMatched = 0, nManual = 0;
+      pointsLayer = L.geoJSON(fc, {
+        pointToLayer: (feature, latlng) => {
+          const props = feature.properties;
+          if (props._manual) nManual++; else if (props._matched) nMatched++; else nGaz++;
+          const m = L.circleMarker(latlng, pointStyle(props));
+          m._props = props;
+          m.bindTooltip(String(props.name || props.id), { className: 'mb' });
+          m.on('click', e => onPointClick(props, m, e));
+          pointMarkers[String(props.id)] = m;
+          return m;
+        },
+      }).addTo(map);
+      $('legendGaz').textContent = nGaz;
+      $('legendMatched').textContent = nMatched;
+      $('legendManual').textContent = nManual;
+      if (fc.skipped > 0) {
+        logLine('Note: ' + fc.skipped + ' point(s) have missing/invalid coordinates and are not shown on the map.');
+      }
+      if (fc.capped > 0) {
+        logLine('Note: map shows the first ' + Object.keys(pointMarkers).length.toLocaleString()
+          + ' points; ' + fc.capped.toLocaleString() + ' more are hidden for performance (matching still uses all).');
+      }
+      if (!mapFitted && pointsLayer.getLayers().length > 0) {
+        map.fitBounds(pointsLayer.getBounds().pad(0.1));
+        mapFitted = true;
+      }
+      renderMapChrome();
+    })
+    .catch(err => console.error('Failed to load points:', err));
+}
+
+function fitToData() {
+  if (map && pointsLayer && pointsLayer.getLayers().length > 0) {
+    map.fitBounds(pointsLayer.getBounds().pad(0.1));
+  }
+}
+
+function toggleBasemap() {
+  if (!map) return;
+  basemapDark = !basemapDark;
+  map.removeLayer(tileLayer);
+  const t = basemapDark ? TILES.osm : TILES.light;
+  tileLayer = L.tileLayer(t.url, t.opts).addTo(map);
+}
+
+/* ---- leaf map-pin mode ---- */
+function startPlacing() {
+  const p = S.picker;
+  if (!p || p.level !== 'leaf') return;
+  S.placing = { refId: p.row.ref_id, name: p.row.name };
+  closePicker();
+  $('placingCard').classList.remove('hidden');
+  $('placingWho').textContent = S.placing.name;
+  $('map').classList.add('picking-mode-map');
+}
+
+function cancelPlacing() {
+  S.placing = null;
+  $('placingCard').classList.add('hidden');
+  $('map').classList.remove('picking-mode-map');
+}
+
+function savePlacing(targetId, lat, lon, desc) {
+  const body = collectFormData();
+  body.ref_id = S.placing.refId;
+  body.target_id = targetId || '';
+  body.latitude = lat;
+  body.longitude = lon;
+  const name = S.placing.name;
+  fetch(withMode('/api/geo/manual-match'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) { alert(data.error); return; }
+      logLine('Geocoded "' + name + '" → ' + desc);
+      cancelPlacing();
+      refreshPoints();
+      refreshLevels({ advance: true });
+    })
+    .catch(err => alert('Failed to save match: ' + err));
+}
+
+function onPointClick(props, marker, e) {
+  if (e && e.originalEvent) L.DomEvent.stopPropagation(e);
+  if (!S.placing) return;
+  if (props._matched) {
+    logLine('"' + (props.name || props.id) + '" is already matched — pick an unmatched (blue) point.');
+    return;
+  }
+  const ll = marker.getLatLng();
+  savePlacing(props.id, ll.lat, ll.lng, 'point "' + (props.name || props.id) + '"');
+}
+
+function onMapClick(e) {
+  if (!S.placing) return;
+  savePlacing('', e.latlng.lat, e.latlng.lng,
+    '(' + e.latlng.lat.toFixed(5) + ', ' + e.latlng.lng.toFixed(5) + ')');
+}
+
+/* ============================================================
+   Sheet + popover + global click routing
+   ============================================================ */
+const closePop = () => $('matchPop').classList.add('hidden');
+
+function openSheet(section) {
+  closePop();
+  setSheetSection(section || 'match');
+  $('sheet').classList.remove('hidden');
+  render();
+}
+
+function setSheetSection(sec) {
+  document.querySelectorAll('.nav-item').forEach(n =>
+    n.setAttribute('aria-current', String(n.dataset.sec === sec)));
+  document.querySelectorAll('[data-pane]').forEach(p =>
+    p.classList.toggle('hidden', p.dataset.pane !== sec));
+}
+
+document.addEventListener('click', e => {
+  const t = e.target.closest('[data-act],[data-open],[data-unlink],[data-cand],[data-sec],'
+    + '[data-lvl-rerun],[data-lvl-remove]');
+  if (!t) {
+    if (!e.target.closest('#matchPop') && !e.target.closest('#matchChip')) closePop();
+    return;
+  }
+  const act = t.dataset.act;
+  if (act === 'pop-match') { $('matchPop').classList.toggle('hidden'); renderPop(); return; }
+  if (act === 'pop-close') return closePop();
+  if (act === 'pop-rerun') return rerunLevel(activeLevel());
+  if (act === 'run') return runPipeline();
+  if (act === 'sheet-open') return openSheet('match');
+  if (act === 'sheet-ref') return openSheet('ref');
+  if (act === 'sheet-pts') return openSheet('pts');
+  if (act === 'sheet-close') { $('sheet').classList.add('hidden'); render(); refreshLevels(); return; }
+  if (act === 'picker-close') return closePicker();
+  if (act === 'picker-confirm') return confirmPicker();
+  if (act === 'picker-pin') return startPlacing();
+  if (act === 'placing-cancel') return cancelPlacing();
+  if (act === 'export') return exportGeocoded();
+  if (act === 'log-toggle') return $('logCard').classList.toggle('hidden');
+  if (act === 'map-fit') return fitToData();
+  if (act === 'map-basemap') return toggleBasemap();
+  if (act === 'add-level') {
+    levelDefs.push({ label: 'level' + (levelDefs.length + 1), refCol: '', targetCol: '' });
+    renderLevelTable();
+    return;
+  }
+  if (t.dataset.sec) return setSheetSection(t.dataset.sec);
+  if (t.dataset.open !== undefined) return openPicker(t.dataset.open);
+  if (t.dataset.unlink !== undefined) return unlinkRow(t.dataset.unlink);
+  if (t.dataset.cand !== undefined) {
+    S.sel = S.candidates.find(c => c.name === t.dataset.cand) || null;
+    return renderPicker();
+  }
+  if (t.dataset.lvlRerun !== undefined) return rerunLevel(t.dataset.lvlRerun);
+  if (t.dataset.lvlRemove !== undefined) {
+    levelDefs.splice(parseInt(t.dataset.lvlRemove), 1);
+    renderLevelTable();
+    refreshLevels();
+    return;
+  }
+});
+
+document.addEventListener('change', e => {
+  const el = e.target;
+  if (el.dataset.lvlThresh !== undefined) {
+    S.thresholds[el.dataset.lvlThresh] = parseInt(el.value) || 0;
+    S.touched[el.dataset.lvlThresh] = true;
+    renderChips(); renderPop();
+    return;
+  }
+  if (el.id === 'popThreshold') {
+    const lvl = activeLevel();
+    S.thresholds[lvl] = parseInt(el.value) || 0;
+    S.touched[lvl] = true;
+    renderChips(); renderPop(); renderLevelTable();
+    return;
+  }
+  if (el.id === 'popDist') { $('levenshtein_distance_threshold').value = el.value; S.touched.leaf = true; renderChips(); return; }
+  if (el.id === 'popLevScore') { $('levenshtein_score_threshold').value = el.value; S.touched.leaf = true; renderChips(); return; }
+  if (el.dataset.lvlLabel !== undefined) {
+    const i = parseInt(el.dataset.lvlLabel);
+    const old = levelDefs[i].label;
+    levelDefs[i].label = el.value.trim();
+    if (old && old !== levelDefs[i].label && S.thresholds[old] != null) {
+      S.thresholds[levelDefs[i].label] = S.thresholds[old];
+      delete S.thresholds[old];
+      if (S.touched[old] != null) delete S.touched[old];
+    }
+    renderLevelTable(); refreshLevels();
+    return;
+  }
+  if (el.dataset.lvlRef !== undefined) {
+    levelDefs[parseInt(el.dataset.lvlRef)].refCol = el.value;
+    refreshLevels();
+    return;
+  }
+  if (el.dataset.lvlTgt !== undefined) {
+    levelDefs[parseInt(el.dataset.lvlTgt)].targetCol = el.value;
+    refreshLevels();
+    return;
+  }
+});
+
+$('pickerFilter').addEventListener('input', renderPicker);
+$('project-btn').addEventListener('click', () => openSheet('cfg'));
+
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  if (S.picker) return closePicker();
+  if (!$('sheet').classList.contains('hidden')) { $('sheet').classList.add('hidden'); return; }
+  if (S.placing) return cancelPlacing();
+  closePop();
+});
+
+/* ============================================================
+   Chat (SHARED with index.html, except mode on /api/chat)
+   ============================================================ */
+const chatToggle = $('chat-toggle');
+const chatWindow = $('chat-window');
+const chatMessages = $('chat-messages');
+const chatInput = $('chat-input');
+const chatSend = $('chat-send');
+
+chatToggle.addEventListener('click', () => {
+  chatWindow.classList.toggle('d-none');
+  if (!chatWindow.classList.contains('d-none')) chatInput.focus();
+});
+$('chat-close').addEventListener('click', () => chatWindow.classList.add('d-none'));
+
+(function () {
+  let dragging = false, offsetX = 0, offsetY = 0;
+  const header = $('chat-header');
+  header.addEventListener('mousedown', e => {
+    if (e.target.closest('.btn-close')) return;
+    dragging = true;
+    const rect = chatWindow.getBoundingClientRect();
+    offsetX = e.clientX - rect.left;
+    offsetY = e.clientY - rect.top;
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    const x = Math.max(0, Math.min(e.clientX - offsetX, window.innerWidth - chatWindow.offsetWidth));
+    const y = Math.max(0, Math.min(e.clientY - offsetY, window.innerHeight - chatWindow.offsetHeight));
+    chatWindow.style.left = x + 'px';
+    chatWindow.style.top = y + 'px';
+    chatWindow.style.right = 'auto';
+    chatWindow.style.bottom = 'auto';
+  });
+  document.addEventListener('mouseup', () => { dragging = false; });
+})();
+
+function chatAddMessage(text, cls) {
+  const div = document.createElement('div');
+  div.className = 'chat-msg ' + cls;
+  div.innerHTML = '<div class="chat-bubble">' + escapeHtml(text) + '</div>';
+  chatMessages.appendChild(div);
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+  return div;
+}
+
+function chatSendMessage() {
+  const msg = chatInput.value.trim();
+  if (!msg) return;
+  chatInput.value = '';
+  chatAddMessage(msg, 'chat-msg-user');
+  const thinking = chatAddMessage('Thinking...', 'chat-msg-thinking');
+  chatSend.disabled = true;
+
+  fetch(withMode('/api/chat'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message: msg, level: activeLevel(), mode: 'geo' }),
+  })
+    .then(r => r.json())
+    .then(data => {
+      thinking.remove();
+      chatAddMessage(data.error ? 'Error: ' + data.error : data.response, 'chat-msg-claude');
+    })
+    .catch(err => {
+      thinking.remove();
+      chatAddMessage('Error: ' + err, 'chat-msg-claude');
+    })
+    .finally(() => { chatSend.disabled = false; chatInput.focus(); });
+}
+
+chatSend.addEventListener('click', chatSendMessage);
+chatInput.addEventListener('keydown', e => { if (e.key === 'Enter') chatSendMessage(); });
+
+/* ---------- boot ---------- */
+render();
+refreshLevels();
+</script>
+{% endblock %}
