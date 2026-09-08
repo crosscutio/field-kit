@@ -28,3 +28,4 @@ match-bot/gazetteer/out/
 
 # Per-user project workspace — private data, typically its own git repo (see match-bot/CLAUDE.md)
 match-bot/projects/
+match-bot/instance/
