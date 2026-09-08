@@ -93,6 +93,10 @@ def list_countries():
         for row in csv.DictReader(rows):
             countries.append({'iso3': row['iso3'], 'iso2': row['iso2'],
                               'name': row['name']})
+    # The bundled file is ordered by GeoNames' original names; sort by the
+    # display name (accent-insensitive) so relabelled entries land where a
+    # reader expects them.
+    countries.sort(key=lambda c: norm_name(c['name']))
     return countries
 
 
