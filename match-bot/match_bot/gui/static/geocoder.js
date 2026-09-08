@@ -183,6 +183,7 @@
     const f = form(); const r = S.st && S.st.ref;
     if (!r) return 'not set';
     if (!placesReady()) return `${r.rows} rows · columns not set`;
+    if (hierLevels().length && !(S.st.ready || {}).tagged) return `${r.rows} places · admin units not assigned`;
     return `${r.rows} places` + (f.ref_source === 'gazetteer' ? ' · OSM + GeoNames' : ' · own file');
   }
 
@@ -202,14 +203,11 @@
       html += `<div class="filecard maxw"><div class="flex"><div class="name">${esc(f.ref_filename)}</div><div class="mono muted" style="font-size:11px;margin-top:5px">${r.rows} rows · ${cols.length} columns${src === 'gazetteer' ? ' · built from OSM + GeoNames' : ''}</div></div>
         ${src === 'gazetteer' ? '<button class="btn" data-act="pick-gaz">Rebuild</button>' : ''}<button class="btn" data-act="pick-file" data-role="ref">Replace with csv</button></div>
         <div class="h1 mt">Which columns hold the places?</div><div class="colrows maxw">
-        <div class="colrow first"><span class="lbl">Place name</span>${colSelect(f.ref_name_column, cols, 'data-field="ref_name_column"')}<span class="right">${r.rows} filled</span></div>`;
-      thier.forEach((h, i) => {
-        const rh = hier[i] || {};
-        html += `<div class="colrow"><span class="lbl">${esc(h.label || 'level ' + (i + 1))}</span>${colSelect(rh.column, cols, `data-hier="ref" data-i="${i}" data-k="column"`)}<span class="right">admin level ${i + 1}</span></div>`;
-      });
-      html += `<div class="colrow"><span class="lbl">Latitude</span>${colSelect(f.ref_lat_column, cols, 'data-field="ref_lat_column"')}<span class="right"></span></div>
-        <div class="colrow"><span class="lbl">Longitude</span>${colSelect(f.ref_lon_column, cols, 'data-field="ref_lon_column"')}<span class="right"></span></div></div>`;
-      const pcols = [f.ref_name_column].concat(hier.map(h => h.column), [f.ref_lat_column, f.ref_lon_column]).filter(Boolean);
+        <div class="colrow first"><span class="lbl">Place name</span>${colSelect(f.ref_name_column, cols, 'data-field="ref_name_column"')}<span class="right">${r.rows} filled</span></div>
+        <div class="colrow"><span class="lbl">Latitude</span>${colSelect(f.ref_lat_column, cols, 'data-field="ref_lat_column"')}<span class="right"></span></div>
+        <div class="colrow"><span class="lbl">Longitude</span>${colSelect(f.ref_lon_column, cols, 'data-field="ref_lon_column"')}<span class="right"></span></div></div>
+        <div class="note maxw" style="margin-top:12px">admin units for each place are assigned from the boundaries below — any admin columns in this file are ignored</div>`;
+      const pcols = [f.ref_name_column, f.ref_lat_column, f.ref_lon_column].filter(Boolean);
       if (pcols.length) {
         const grid = `grid-template-columns:${pcols.map((c, i) => i === 0 ? '1.4fr' : '1fr').join(' ')}`;
         html += `<div class="preview maxw"><div class="hd" style="${grid}">${pcols.map(c => `<div>${esc(c)}</div>`).join('')}</div>`;
@@ -240,23 +238,38 @@
 
   function renderBoundaries(f) {
     const lv = hierLevels();
-    if (!lv.length) return '';
+    if (!lv.length) return `<div class="bounds"><div class="label-caps">Admin boundaries</div><div class="note">no admin levels on the community list — nothing to assign</div></div>`;
     const src = f.boundaries_source || 'auto';
     const files = f.boundary_files || {};
-    let html = `<div class="bounds"><div class="label-caps">Admin boundaries for the map</div>
+    const bl = f.boundary_levels || {};
+    const tagged = f.ref_tagged;
+    const ready = S.st.ready || {};
+    let html = `<div class="bounds"><div class="label-caps">Admin boundaries · assign each place its ${lv.join(' and ')}</div>
+      <div class="note">the tool places every named point inside these polygons and uses the polygon names as its admin units</div>
       <div class="row"><label class="radio"><input type="radio" name="bsrc" value="auto" ${src === 'auto' ? 'checked' : ''} data-field="boundaries_source">geoBoundaries (automatic)</label>
-      <label class="radio"><input type="radio" name="bsrc" value="upload" ${src === 'upload' ? 'checked' : ''} data-field="boundaries_source">upload my own GeoJSON</label>
-      <label class="radio"><input type="radio" name="bsrc" value="none" ${src === 'none' ? 'checked' : ''} data-field="boundaries_source">none</label></div>`;
+      <label class="radio"><input type="radio" name="bsrc" value="upload" ${src === 'upload' ? 'checked' : ''} data-field="boundaries_source">upload my own GeoJSON</label></div>`;
     if (src === 'auto') {
-      html += `<div class="row"><span>Country</span><select class="input" data-field="country" style="min-width:260px"><option value="">choose…</option>${S.gaz.countries.map(c => `<option value="${esc(c.iso3)}" ${c.iso3 === f.country ? 'selected' : ''}>${esc(c.name)} (${esc(c.iso3)})</option>`).join('')}</select><span class="note">levels map to ADM1, ADM2… in order; downloaded on first use</span></div>`;
-    } else if (src === 'upload') {
+      html += `<div class="row"><span>Country</span><select class="input" data-field="country" style="min-width:260px"><option value="">choose…</option>${S.gaz.countries.map(c => `<option value="${esc(c.iso3)}" ${c.iso3 === f.country ? 'selected' : ''}>${esc(c.name)} (${esc(c.iso3)})</option>`).join('')}</select>${f.country ? `<button class="btn sm" data-act="suggest-levels">Suggest levels from names</button>` : ''}</div>`;
+      lv.forEach((l, i) => {
+        const cur = bl[l] || ('ADM' + Math.min(i + 1, 4));
+        html += `<div class="lvl"><span class="mono">${esc(l)}</span><span class="row"><span class="note">geoBoundaries level</span><select class="input" data-adm="${esc(l)}">${['ADM1', 'ADM2', 'ADM3', 'ADM4'].map(a => `<option ${a === cur ? 'selected' : ''}>${a}</option>`).join('')}</select></span><span class="note">${tagged && tagged.stats && tagged.stats[l] ? tagStat(tagged.stats[l]) : ''}</span></div>`;
+      });
+    } else {
       lv.forEach(l => {
         const bf = files[l];
-        html += `<div class="lvl"><span class="mono">${esc(l)}</span>${bf ? `<span class="note">${esc(bf.filename)} · ${bf.features} features</span><span class="row"><span class="note">name property</span>${colSelect(bf.name_property, bf.properties, `data-bprop="${esc(l)}"`)}</span>` : `<button class="btn" data-act="pick-file" data-role="boundaries" data-label="${esc(l)}">Choose .geojson</button><span></span>`}</div>`;
+        html += `<div class="lvl"><span class="mono">${esc(l)}</span>${bf ? `<span class="note">${esc(bf.filename)} · ${bf.features} features · <span style="cursor:pointer;text-decoration:underline" data-act="pick-file" data-role="boundaries" data-label="${esc(l)}">replace</span></span><span class="row"><span class="note">name property</span>${colSelect(bf.name_property, bf.properties, `data-bprop="${esc(l)}"`)}</span>` : `<button class="btn" data-act="pick-file" data-role="boundaries" data-label="${esc(l)}">Choose .geojson</button><span></span>`}</div>`;
+        if (bf && tagged && tagged.stats && tagged.stats[l]) html += `<div class="note" style="padding-left:132px">${tagStat(tagged.stats[l])}</div>`;
       });
     }
+    const canTag = ready.ref && (src === 'upload' ? lv.every(l => files[l] && files[l].name_property) : !!f.country);
+    html += `<div class="row" style="margin-top:6px"><button class="btn ${ready.tagged ? '' : 'primary'}" data-act="tag-places" ${canTag ? '' : 'disabled'}>${ready.tagged ? 'Re-assign admin units' : 'Assign admin units from boundaries'}</button>
+      <span class="note">${ready.tagged ? `${tagged.rows} places tagged` : (canTag ? 'required before matching' : (ready.ref ? 'choose the boundaries first' : 'set the place columns first'))}</span></div>`;
     html += '</div>';
     return html;
+  }
+  function tagStat(st) {
+    const inside = st.inside + st.snapped;
+    return `${st.adm === 'upload' ? 'your file' : st.adm} · ${st.polygons} polygons · ${inside} places inside${st.outside ? ` · ${st.outside} outside all polygons` : ''}${st.invalid ? ` · ${st.invalid} without coordinates` : ''}`;
   }
 
   function renderSub3(f) {
@@ -661,8 +674,8 @@
       inp.dataset.label = el.dataset.label || '';
       inp.value = ''; inp.click();
     },
-    'add-level': async () => { const h = (form().target_hierarchy || []).slice(); h.push({ column: '', label: h.length === 0 ? 'region' : h.length === 1 ? 'district' : 'level' + (h.length + 1) }); const rh = (form().ref_hierarchy || []).slice(); rh.push({ column: '', label: h[h.length - 1].label }); await saveForm({ target_hierarchy: h, ref_hierarchy: rh }); render(); },
-    'rm-level': async el => { const i = Number(el.dataset.i); const h = (form().target_hierarchy || []).slice(); h.splice(i, 1); const rh = (form().ref_hierarchy || []).slice(); rh.splice(i, 1); await saveForm({ target_hierarchy: h, ref_hierarchy: rh }); render(); },
+    'add-level': async () => { const h = (form().target_hierarchy || []).slice(); h.push({ column: '', label: h.length === 0 ? 'region' : h.length === 1 ? 'district' : 'level' + (h.length + 1) }); await saveForm({ target_hierarchy: h }); render(); },
+    'rm-level': async el => { const i = Number(el.dataset.i); const h = (form().target_hierarchy || []).slice(); h.splice(i, 1); await saveForm({ target_hierarchy: h }); render(); },
     'pick-gaz': async () => { S.gaz.open = true; await loadGazCountries(); await saveForm({ ref_source: 'gazetteer' }); render(); },
     'pick-upload': async () => { S.gaz.open = false; await saveForm({ ref_source: 'upload' }); render(); if (!S.st.ref) actions['pick-file']({ dataset: { role: 'ref' } }); },
     'gaz-admin1': async () => { const d = await api('/api/gazetteer/admin1', { json: { iso3: S.gaz.iso3 } }); if (d) { S.gaz.admin1 = d.admin1; S.gaz.sel = []; S.gaz.preview = null; S.gaz.log = [d.cached ? 'boundaries from cache' : 'boundaries downloaded']; } render(); },
@@ -676,6 +689,17 @@
         S.gaz.log[S.gaz.log.length - 1] = d ? `${a}: ${d.count} OSM places${d.cached ? ' (cached)' : ''}` : `${a}: failed`;
         render();
       }
+    },
+    'tag-places': async () => {
+      const lv = hierLevels();
+      const d = await api('/api/tag-places', { json: {}, msg: `Placing every named point inside the ${lv.join(' and ')} boundaries` });
+      if (d) { const st = d.tagging.stats; toast(`${d.tagging.rows} places tagged: ` + Object.keys(st).map(k => `${k} ${st[k].inside + st[k].snapped} in / ${st[k].outside} out`).join(', '), 6000); Object.keys(BOUNDS_CACHE).forEach(k => delete BOUNDS_CACHE[k]); }
+      render();
+    },
+    'suggest-levels': async () => {
+      const d = await api('/api/boundary-levels/suggest', { json: {}, msg: 'Comparing geoBoundaries ADM1–ADM3 names with your admin names' });
+      if (d) toast('suggested: ' + Object.entries(d.boundary_levels).map(([k, v]) => `${k} → ${v}`).join(', '), 5000);
+      render();
     },
     'gaz-build': async () => {
       const d = await api('/api/gazetteer/build', { json: { iso3: S.gaz.iso3, admin1: S.gaz.sel }, msg: 'Assembling named places from GeoNames and OSM' });
@@ -791,6 +815,7 @@
       if (t.dataset.field === 'threshold') v = Number(v);
       await saveForm({ [t.dataset.field]: v });
       if (t.dataset.field === 'boundaries_source' || t.dataset.field === 'country') { Object.keys(BOUNDS_CACHE).forEach(k => delete BOUNDS_CACHE[k]); }
+      if (t.dataset.field === 'country' && v && hierLevels().length) { await actions['suggest-levels'](); return; }
       if (t.dataset.field === 'restrict' && S.stage === 3 && form().ran) await loadHist();
       render();
     } else if (t.dataset.hier) {
@@ -799,12 +824,10 @@
       const i = Number(t.dataset.i);
       while (h.length <= i) h.push({ column: '', label: '' });
       h[i][t.dataset.k] = t.value;
-      const patch = { [which]: h };
-      if (which === 'target_hierarchy' && t.dataset.k === 'label') { const rh = (form().ref_hierarchy || []).map(x => Object.assign({}, x)); while (rh.length <= i) rh.push({ column: '', label: '' }); rh[i].label = t.value; patch.ref_hierarchy = rh; }
-      if (which === 'ref_hierarchy') { const th = form().target_hierarchy || []; h.forEach((x, j) => { if (th[j]) x.label = th[j].label; }); }
-      await saveForm(patch); render();
+      await saveForm({ [which]: h }); render();
     } else if (t.dataset.gaz === 'iso3') { S.gaz.iso3 = t.value; S.gaz.admin1 = []; S.gaz.sel = []; render(); }
     else if (t.dataset.gazAdmin !== undefined) { const a = t.dataset.gazAdmin; if (t.checked) { if (!S.gaz.sel.includes(a)) S.gaz.sel.push(a); } else S.gaz.sel = S.gaz.sel.filter(x => x !== a); render(); }
+    else if (t.dataset.adm) { await api('/api/boundary-levels', { json: { label: t.dataset.adm, adm: t.value } }); Object.keys(BOUNDS_CACHE).forEach(k => delete BOUNDS_CACHE[k]); render(); }
     else if (t.dataset.bprop) { await api('/api/boundary-property', { json: { label: t.dataset.bprop, name_property: t.value } }); Object.keys(BOUNDS_CACHE).forEach(k => delete BOUNDS_CACHE[k]); render(); }
   });
   document.addEventListener('input', e => {
@@ -857,8 +880,7 @@
     const a1 = guess(cols, [/admin_?1|adm1|region|province|state/i]);
     const a2 = guess(cols, [/admin_?2|adm2|district|iu$|lga|county|department/i]);
     const h = []; if (a1) h.push({ column: a1, label: 'region' }); if (a2) h.push({ column: a2, label: 'district' });
-    const rh = h.map(x => ({ column: '', label: x.label }));
-    await saveForm({ target_name_column: name, target_hierarchy: h, ref_hierarchy: (form().ref_hierarchy || []).length ? form().ref_hierarchy : rh });
+    await saveForm({ target_name_column: name, target_hierarchy: h });
   }
   async function autoMapRef() {
     const cols = (S.st.ref || {}).columns || [];
@@ -867,9 +889,6 @@
     if (!f.ref_name_column) patch.ref_name_column = guess(cols, [/^name$/i, /place|name/i]);
     if (!f.ref_lat_column) patch.ref_lat_column = guess(cols, [/^lat/i, /latitude|^y$/i]);
     if (!f.ref_lon_column) patch.ref_lon_column = guess(cols, [/^lon|^lng/i, /longitude|^x$/i]);
-    const th = f.target_hierarchy || [];
-    const rh = th.map((h, i) => { const cur = (f.ref_hierarchy || [])[i] || {}; return { column: cur.column || guess(cols, [i === 0 ? /admin_?1|adm1|region|province|state/i : /admin_?2|adm2|district|department|county/i]), label: h.label }; });
-    patch.ref_hierarchy = rh;
     await saveForm(patch);
   }
 

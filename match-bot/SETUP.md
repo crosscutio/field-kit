@@ -52,10 +52,13 @@ page reloads while the server is running.
 The GUI is one page that walks a community list through five stages:
 
 1. **Set up** — upload the community list (names + admin columns), choose
-   where named places come from (your own geocoded CSV, or build one from
-   OSM + GeoNames for a country's admin areas), pick admin boundaries for the
-   map (geoBoundaries automatically, or your own GeoJSON), and set the
-   auto-accept threshold.
+   where named places come from (your own geocoded CSV with name, latitude
+   and longitude, or build one from OSM + GeoNames), then provide admin
+   boundaries for each admin level (geoBoundaries automatically, with the
+   ADM level chosen per admin level, or your own GeoJSON). **Assign admin
+   units from boundaries** places every point inside those polygons; the
+   polygon names become the places' admin units and any admin columns in
+   the places CSV are ignored. Finally set the auto-accept threshold.
 2. **Admin names** — harmonize admin names level by level (region, then
    district…). Each level is a list of your names with ranked candidates from
    the places file; link, mark "no equivalent", or bulk-accept above a score.
@@ -91,8 +94,9 @@ the same areas are instant.
   ideally, one or more admin columns (region, district…). An id column is
   optional — rows are numbered internally and every original column is kept
   in the export.
-- **Named places**: name, matching admin columns, latitude, longitude. Or
-  build them from the gazetteer.
+- **Named places**: name, latitude, longitude. Admin units are assigned
+  spatially from the boundaries you provide, so the file needs no admin
+  columns. Or build the places from the gazetteer.
 
 The CLI (`python -m match_bot lookups|suggest --config …`) works on the same
 lookup tables; `projects/ICR Examples/CIV_example.md` walks through it.

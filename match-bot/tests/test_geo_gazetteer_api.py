@@ -75,9 +75,16 @@ def test_build_writes_reference_and_pairs_hierarchy(seeded):
     assert data['count'] == 4
     form = data['form']
     assert form['ref_source'] == 'gazetteer' and form['ref_id_column'] == 'point_id'
-    assert form['ref_hierarchy'] == [{'column': 'admin1', 'label': 'region'}]
-    assert form['country'] == ISO3
+    assert form['ref_hierarchy'] == [] and form['country'] == ISO3
     assert data['ref']['rows'] == 4 and 'latitude' in data['ref']['columns']
 
     b = seeded.get('/api/boundaries/region').get_json()
     assert b['ok'] and b['name_property'] == 'shapeName' and len(b['geojson']['features']) == 2
+    assert b['adm'] == 'ADM1'
+
+    # Tagging derives the reference hierarchy from the polygons
+    t = seeded.post('/api/tag-places').get_json()
+    assert t['ok'], t
+    assert t['tagging']['stats']['region']['inside'] == 4
+    assert t['form']['ref_hierarchy'] == [{'column': 'adm_region', 'label': 'region'}]
+    assert t['ready']['tagged'] is True

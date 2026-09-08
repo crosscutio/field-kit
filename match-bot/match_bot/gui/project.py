@@ -26,6 +26,7 @@ from match_bot.core.config import MatcherConfig
 from match_bot.core.lookup import load_lookup
 from match_bot.core.standardization import normalize_text, remove_accents
 from match_bot.gui.history import History
+from match_bot.gui import spatial
 
 ROW_ID = '_row_id'
 PIN_COLUMNS = ['target_id', 'latitude', 'longitude']
@@ -35,7 +36,8 @@ DEFAULT_FORM = {
     'target_filename': '', 'target_name_column': '', 'target_hierarchy': [],
     'ref_filename': '', 'ref_source': None, 'ref_name_column': '', 'ref_id_column': ROW_ID,
     'ref_lat_column': '', 'ref_lon_column': '', 'ref_hierarchy': [],
-    'boundaries_source': 'auto', 'country': '', 'boundary_files': {},
+    'boundaries_source': 'auto', 'country': '', 'boundary_files': {}, 'boundary_levels': {},
+    'ref_tagged': None,   # {'levels': [...], 'stats': {label: {...}}} once places are tagged
     'threshold': 85, 'restrict': True,
     'ran': False, 'last_run': '',
     'ui': {},
@@ -90,8 +92,18 @@ class Project:
     @property
     def pins_path(self): return self.sd / 'output' / 'manual_geocode.csv'
 
+    @property
+    def ref_tagged_path(self): return self.sd / 'ref_tagged.csv'
+
     def boundary_path(self, label):
         return self.sd / f'boundaries_{label}.geojson'
+
+    def ref_file(self) -> str:
+        """Reference CSV the engine reads: the boundary-tagged copy when it
+        exists and is current, else the raw upload."""
+        if self.form().get('ref_tagged') and self.ref_tagged_path.exists():
+            return 'ref_tagged.csv'
+        return 'ref.csv'
 
     # ---- form state ------------------------------------------------------
     def form(self) -> Dict:
@@ -125,6 +137,10 @@ class Project:
         if role == 'ref':
             upd['ref_source'] = 'upload'
             upd['ref_id_column'] = ROW_ID
+            upd['ref_tagged'] = None
+            upd['ref_hierarchy'] = []
+            if self.ref_tagged_path.exists():
+                self.ref_tagged_path.unlink()
         self.update_form(**upd)
         return self.table_info(role)
 
@@ -161,7 +177,7 @@ class Project:
         r_h = [{'column': h['column'], 'label': h['label']} for h in f.get('ref_hierarchy', []) if h.get('column')]
         raw = {
             'project_name': f.get('project_name') or 'Untitled project',
-            'reference': {'file': 'ref.csv', 'columns': {
+            'reference': {'file': self.ref_file(), 'columns': {
                 'id': f.get('ref_id_column') or ROW_ID, 'name': f.get('ref_name_column', ''),
                 'latitude': f.get('ref_lat_column', ''), 'longitude': f.get('ref_lon_column', ''),
                 'hierarchy': r_h}},
@@ -179,11 +195,14 @@ class Project:
 
     def ready(self) -> Dict:
         f = self.form()
+        levels = [h['label'] for h in f.get('target_hierarchy', []) if h.get('column') and h.get('label')]
+        tagged = f.get('ref_tagged') or {}
+        tagged_ok = not levels or (list(tagged.get('levels', [])) == levels and self.ref_tagged_path.exists())
         return {
             'target': self.target_path.exists() and bool(f.get('target_name_column')),
             'ref': self.ref_path.exists() and bool(f.get('ref_name_column')) and bool(f.get('ref_lat_column')),
-            'hierarchy_paired': len([h for h in f.get('target_hierarchy', []) if h.get('column')]) ==
-                                len([h for h in f.get('ref_hierarchy', []) if h.get('column')]),
+            'tagged': tagged_ok,
+            'hierarchy_paired': tagged_ok and len(levels) == len([h for h in f.get('ref_hierarchy', []) if h.get('column')]),
         }
 
     # ---- pipeline --------------------------------------------------------
@@ -294,6 +313,101 @@ class Project:
                 c.update({'lat': lat, 'lon': lon, 'ref_name_raw': raw or c['ref_name']})
         return cands
 
+    # ---- boundaries ------------------------------------------------------
+    ADM_LEVELS = ['ADM1', 'ADM2', 'ADM3', 'ADM4']
+
+    def boundary_geojson(self, label) -> Optional[Dict]:
+        """{'geojson', 'name_property', 'adm'} for one hierarchy level, or None.
+
+        Uploaded GeoJSON wins; otherwise geoBoundaries for the form's country at
+        the ADM level recorded in ``boundary_levels`` (default: level order).
+        Raises the gazetteer/network errors for the caller to report."""
+        from match_bot import gazetteer as gz
+        f = self.form()
+        levels = self.levels()[:-1]
+        if label not in levels:
+            return None
+        path = self.boundary_path(label)
+        if path.exists():
+            info = (f.get('boundary_files') or {}).get(label) or {}
+            gj = json.loads(path.read_text(encoding='utf-8'))
+            return {'geojson': gj, 'name_property': info.get('name_property') or 'shapeName', 'adm': 'upload'}
+        if f.get('country') and f.get('boundaries_source') != 'none':
+            adm = (f.get('boundary_levels') or {}).get(label) or self.ADM_LEVELS[min(levels.index(label), 3)]
+            bp = gz.ensure_boundaries(f['country'].upper(), adm)
+            gj = json.loads(Path(bp).read_text(encoding='utf-8'))
+            return {'geojson': gj, 'name_property': 'shapeName', 'adm': adm}
+        return None
+
+    def suggest_boundary_levels(self) -> Dict[str, str]:
+        """Pick, per hierarchy level, the geoBoundaries ADM level whose names
+        overlap the community list's values best. Stored in boundary_levels."""
+        from match_bot import gazetteer as gz
+        f = self.form()
+        if not f.get('country') or f.get('boundaries_source') == 'none':
+            return {}
+        iso3 = f['country'].upper()
+        tgt = self._target_std_frame()
+        levels = self.levels()[:-1]
+        available = {}
+        for adm in self.ADM_LEVELS[:3]:
+            try:
+                gj = json.loads(Path(gz.ensure_boundaries(iso3, adm)).read_text(encoding='utf-8'))
+            except Exception:
+                continue
+            available[adm] = {std(fix_mojibake((ft.get('properties') or {}).get('shapeName', '')))
+                              for ft in gj.get('features', [])}
+        chosen = dict(f.get('boundary_levels') or {})
+        used = set()
+        for i, label in enumerate(levels):
+            vals = {v for v in tgt[f'h{i}'].unique() if v} if f'h{i}' in tgt.columns else set()
+            best, best_frac = None, -1.0
+            for adm, names in available.items():
+                if adm in used:
+                    continue
+                frac = (len(vals & names) / len(vals)) if vals else 0.0
+                if frac > best_frac:
+                    best, best_frac = adm, frac
+            if best is None:
+                best = self.ADM_LEVELS[min(i, 3)]
+            chosen[label] = best
+            used.add(best)
+        self.update_form(boundary_levels=chosen, ref_tagged=None)
+        return chosen
+
+    def tag_places(self) -> Dict:
+        """Assign every place its admin units from the boundaries and write
+        ref_tagged.csv; the reference hierarchy then points at those columns."""
+        f = self.form()
+        levels = self.levels()[:-1]
+        df = _read_csv_str(self.ref_path)
+        if df.empty:
+            raise ValueError('Upload or build the named places first')
+        latc, lonc = f.get('ref_lat_column'), f.get('ref_lon_column')
+        if latc not in df.columns or lonc not in df.columns:
+            raise ValueError('Pick the latitude and longitude columns first')
+        stats, hier = {}, []
+        for label in levels:
+            b = self.boundary_geojson(label)
+            if not b:
+                raise ValueError(f'No boundaries for the {label} level — choose a country or upload GeoJSON')
+            gj = b['geojson']
+            for ft in gj.get('features', []):
+                props = ft.get('properties') or {}
+                props[b['name_property']] = fix_mojibake(props.get(b['name_property'], ''))
+            names, geoms = spatial.polygons_from_geojson(gj, b['name_property'])
+            if not names:
+                raise ValueError(f'The {label} boundaries have no usable name property')
+            tags, st = spatial.tag_points(df[latc], df[lonc], names, geoms)
+            col = f'adm_{label}'
+            df[col] = tags
+            stats[label] = {**st, 'polygons': len(names), 'adm': b['adm']}
+            hier.append({'column': col, 'label': label})
+        df.to_csv(self.ref_tagged_path, index=False)
+        self.clear_outputs()
+        self.update_form(ref_hierarchy=hier, ref_tagged={'levels': levels, 'stats': stats, 'rows': int(len(df))})
+        return {'levels': levels, 'stats': stats, 'rows': int(len(df))}
+
     def ref_level_values(self, label) -> Dict[str, str]:
         """std value -> raw value for the reference column paired with ``label``."""
         f = self.form()
@@ -302,7 +416,7 @@ class Project:
             return {}
         hier = [h.get('column') for h in f.get('ref_hierarchy', [])]
         col = hier[labels.index(label)] if labels.index(label) < len(hier) else None
-        df = _read_csv_str(self.ref_path)
+        df = _read_csv_str(self.sd / self.ref_file())
         if not col or col not in df.columns:
             return {}
         out = {}
@@ -319,15 +433,9 @@ class Project:
         for ft in geojson.get('features', []):
             props = ft.setdefault('properties', {})
             name = std(props.get(name_property, ''))
+            # Places are tagged with these very polygon names, so a polygon's
+            # reference value is simply its own standardized name.
             hit = name if name in refs else ''
-            if not hit and name:
-                best, bs = '', 0
-                for r in refs:
-                    sc = sg.score_pair(name, r)
-                    if sc > bs:
-                        best, bs = r, sc
-                if bs >= 90:
-                    hit = best
             props['_ref'] = hit
             props['_name'] = fix_mojibake(props.get(name_property, ''))
             if hit:
@@ -337,7 +445,7 @@ class Project:
     # ---- reference points ------------------------------------------------
     def _ref_coords(self) -> Dict[str, tuple]:
         f = self.form()
-        df = _read_csv_str(self.ref_path)
+        df = _read_csv_str(self.sd / self.ref_file())
         idc, latc, lonc, nc = f.get('ref_id_column') or ROW_ID, f.get('ref_lat_column'), f.get('ref_lon_column'), f.get('ref_name_column')
         if df.empty or idc not in df.columns:
             return {}
@@ -350,7 +458,7 @@ class Project:
         in ``values``. target_id: points in that community's full parent group.
         """
         f = self.form()
-        df = _read_csv_str(self.ref_path)
+        df = _read_csv_str(self.sd / self.ref_file())
         if df.empty:
             return []
         idc, latc, lonc, nc = f.get('ref_id_column') or ROW_ID, f.get('ref_lat_column'), f.get('ref_lon_column'), f.get('ref_name_column')

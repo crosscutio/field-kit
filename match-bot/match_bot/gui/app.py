@@ -69,6 +69,15 @@ def create_app():
             upd = {k: v for k, v in data.items() if k in allowed}
             if 'country' in upd or 'boundaries_source' in upd:
                 upd['boundary_levels'] = {}
+                upd['ref_tagged'] = None
+            if 'target_hierarchy' in upd:
+                old = [h.get('label') for h in p.form().get('target_hierarchy', [])]
+                new_labels = [h.get('label') for h in upd['target_hierarchy']]
+                if old != new_labels:
+                    upd['ref_tagged'] = None
+                    upd['ref_hierarchy'] = []
+            if 'ref_lat_column' in upd or 'ref_lon_column' in upd:
+                upd['ref_tagged'] = None
             if upd:
                 p.update_form(**upd)
         return jsonify({'ok': True, **p.state()})
@@ -110,7 +119,7 @@ def create_app():
             files = p.form().get('boundary_files', {})
             files[label] = {'filename': f.filename, 'name_property': request.form.get('name_property', ''),
                             'properties': props, 'features': len(feats)}
-            p.update_form(boundary_files=files, boundaries_source='upload')
+            p.update_form(boundary_files=files, boundaries_source='upload', ref_tagged=None)
             return jsonify({'ok': True, 'properties': props, 'features': len(feats), **p.state()})
         return fail(f'Unknown role {role!r}')
 
@@ -121,60 +130,59 @@ def create_app():
         label = d.get('label', '')
         if label in files:
             files[label]['name_property'] = d.get('name_property', '')
-            p.update_form(boundary_files=files, boundary_levels={})
+            p.update_form(boundary_files=files, ref_tagged=None)
         return jsonify({'ok': True, **p.state()})
 
     @app.route('/api/boundaries/<label>')
     def api_boundaries(label):
-        """Admin polygons for one hierarchy level, each feature annotated with
-        ``_ref`` = the reference admin value it corresponds to.
-
-        Automatic mode picks the geoBoundaries ADM level whose names overlap
-        the reference file's values best (a country's "regions" are not
-        always ADM1), and remembers the choice in the form state.
-        """
+        """Admin polygons for one hierarchy level; each feature carries
+        ``_ref`` (its standardized name, which is what tagged places use)."""
         p = project()
-        f = p.form()
-        levels = p.levels()[:-1]
-        if label not in levels:
-            return fail('Unknown level', 404)
-        path = p.boundary_path(label)
-        name_prop = 'shapeName'
-        chosen = None
-        if path.exists():
-            name_prop = (f.get('boundary_files', {}).get(label) or {}).get('name_property') or name_prop
-        elif f.get('country') and f.get('boundaries_source') != 'none':
-            iso3 = f['country'].upper()
-            remembered = (f.get('boundary_levels') or {}).get(label)
-            candidates = [remembered] if remembered else ADM_LEVELS[:3]
-            best = None
-            for adm in candidates:
-                try:
-                    bp = gz.ensure_boundaries(iso3, adm)
-                except (gz.GazetteerError, urllib.error.URLError, TimeoutError, OSError) as e:
-                    if remembered or adm == 'ADM1':
-                        return gaz_error(e)
-                    continue
-                gj = json.loads(Path(bp).read_text(encoding='utf-8'))
-                st = p.annotate_boundaries(gj, name_prop, label)
-                frac = st['matched'] / st['reference_values'] if st['reference_values'] else 0
-                if best is None or frac > best[0]:
-                    best = (frac, adm, gj, st)
-                if frac >= 0.8:
-                    break
-            if best is None:
-                return fail('No boundaries available', 404)
-            frac, chosen, gj, st = best
-            bl = f.get('boundary_levels') or {}
-            if bl.get(label) != chosen:
-                bl[label] = chosen
-                p.update_form(boundary_levels=bl)
-            return jsonify({'ok': True, 'name_property': name_prop, 'geojson': gj, 'adm': chosen, **st})
-        else:
+        try:
+            b = p.boundary_geojson(label)
+        except (gz.GazetteerError, urllib.error.URLError, TimeoutError, OSError) as e:
+            return gaz_error(e)
+        if not b:
             return fail('No boundaries available', 404)
-        gj = json.loads(Path(path).read_text(encoding='utf-8'))
-        st = p.annotate_boundaries(gj, name_prop, label)
-        return jsonify({'ok': True, 'name_property': name_prop, 'geojson': gj, 'adm': 'upload', **st})
+        st = p.annotate_boundaries(b['geojson'], b['name_property'], label)
+        return jsonify({'ok': True, **b, **st})
+
+    @app.route('/api/boundary-levels', methods=['POST'])
+    def api_boundary_levels():
+        """Set which geoBoundaries ADM level one hierarchy level maps to."""
+        p, d = project(), body()
+        levels = dict(p.form().get('boundary_levels') or {})
+        label, adm = d.get('label', ''), str(d.get('adm', '')).upper()
+        if label not in p.levels()[:-1] or adm not in ADM_LEVELS:
+            return fail('label and adm (ADM1..ADM4) required')
+        levels[label] = adm
+        p.update_form(boundary_levels=levels, ref_tagged=None)
+        return jsonify({'ok': True, **p.state()})
+
+    @app.route('/api/boundary-levels/suggest', methods=['POST'])
+    def api_boundary_levels_suggest():
+        p = project()
+        try:
+            chosen = p.suggest_boundary_levels()
+        except (gz.GazetteerError, urllib.error.URLError, TimeoutError, OSError) as e:
+            return gaz_error(e)
+        return jsonify({'ok': True, 'boundary_levels': chosen, **p.state()})
+
+    @app.route('/api/tag-places', methods=['POST'])
+    def api_tag_places():
+        """Assign admin units to every place from the boundaries."""
+        p = project()
+        try:
+            res = p.tag_places()
+        except ValueError as e:
+            return fail(str(e))
+        except ImportError as e:
+            return fail(str(e), 500)
+        except (gz.GazetteerError, urllib.error.URLError, TimeoutError, OSError) as e:
+            return gaz_error(e)
+        p.history.add('tagged ' + str(res['rows']) + ' places with ' + ', '.join(
+            f"{k} ({v['adm']}: {v['inside'] + v['snapped']} in, {v['outside']} out)" for k, v in res['stats'].items()))
+        return jsonify({'ok': True, 'tagging': res, **p.state()})
 
     # ---- pipeline --------------------------------------------------------
     @app.route('/api/lookups', methods=['POST'])
@@ -467,13 +475,14 @@ def create_app():
             return gaz_error(e)
         gaz_df.to_csv(p.ref_path, index=False)
         p.clear_outputs()
-        # Pair the gazetteer's admin1/admin2 with the community list's levels.
-        t_h = [h for h in p.form().get('target_hierarchy', []) if h.get('column')]
-        ref_h = [{'column': f'admin{i + 1}', 'label': h['label']} for i, h in enumerate(t_h[:2])]
+        # Admin units come from the boundaries (tagging step), not from the
+        # gazetteer's own admin1/admin2 columns.
+        if p.ref_tagged_path.exists():
+            p.ref_tagged_path.unlink()
         p.update_form(ref_filename=f'{iso3} gazetteer', ref_source='gazetteer',
                       ref_id_column='point_id', ref_name_column='name',
                       ref_lat_column='latitude', ref_lon_column='longitude',
-                      ref_hierarchy=ref_h, country=iso3)
+                      ref_hierarchy=[], ref_tagged=None, country=iso3)
         log.append(f'{len(gaz_df)} named places written')
         return jsonify({'ok': True, 'log': log, 'count': int(len(gaz_df)), **p.state()})
 

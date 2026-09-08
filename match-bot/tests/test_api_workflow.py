@@ -1,6 +1,7 @@
 """End-to-end API walk over the fixture project: upload → admin names →
 auto match → link on map → review, with undo."""
 import io
+import json
 
 import pandas as pd
 import pytest
@@ -24,6 +25,28 @@ def upload(client, role, df, name):
     return r.get_json()
 
 
+def box(name, lat0, lat1, lon0, lon1):
+    return {'type': 'Feature', 'properties': {'name': name},
+            'geometry': {'type': 'Polygon', 'coordinates': [[
+                [lon0, lat0], [lon1, lat0], [lon1, lat1], [lon0, lat1], [lon0, lat0]]]}}
+
+
+# Squares that reproduce the fixture's admin assignments spatially.
+REGIONS = [box('Nord', 0.5, 2.5, 9.5, 11.5), box('Sud', 2.5, 3.7, 11.5, 13.0),
+           box('Centre', 3.7, 4.5, 12.5, 13.5), box('Ouest', 4.5, 5.5, 13.5, 14.5)]
+DISTRICTS = [box('Alpha', 0.5, 1.5, 9.5, 10.5), box('Beta', 1.5, 2.5, 10.5, 11.5),
+             box('Gamma', 2.5, 3.2, 11.5, 12.2), box('Delta', 3.2, 3.7, 12.2, 13.0),
+             box('Eps', 3.7, 4.5, 12.5, 13.5), box('Omega', 4.5, 5.5, 13.5, 14.5)]
+
+
+def upload_boundaries(client, label, features):
+    gj = json.dumps({'type': 'FeatureCollection', 'features': features}).encode()
+    r = client.post('/api/upload', data={'role': 'boundaries', 'label': label, 'name_property': 'name',
+                                         'file': (io.BytesIO(gj), f'{label}.geojson')})
+    assert r.status_code == 200, r.get_json()
+    return r.get_json()
+
+
 @pytest.fixture
 def setup(client):
     t = pd.DataFrame(TARGET_ROWS, columns=['cid', 'community', 'region_name', 'district_name'])
@@ -36,11 +59,23 @@ def setup(client):
         'target_hierarchy': [{'column': 'region_name', 'label': 'region'},
                              {'column': 'district_name', 'label': 'district'}],
         'ref_name_column': 'place', 'ref_lat_column': 'lat', 'ref_lon_column': 'lon',
-        'ref_hierarchy': [{'column': 'adm1', 'label': 'region'}, {'column': 'adm2', 'label': 'district'}],
         'threshold': 85, 'restrict': True,
     }).get_json()
-    assert d['ready'] == {'target': True, 'ref': True, 'hierarchy_paired': True}
+    assert d['ready'] == {'target': True, 'ref': True, 'tagged': False, 'hierarchy_paired': False}
     assert d['levels'] == ['region', 'district', 'leaf']
+    upload_boundaries(client, 'region', REGIONS)
+    d = upload_boundaries(client, 'district', DISTRICTS)
+    assert d['boundaries'] == {'region': True, 'district': True}
+    d = client.post('/api/tag-places').get_json()
+    assert d['ok'], d
+    st = d['tagging']['stats']
+    assert st['region']['inside'] == 9 and st['district']['inside'] == 9 and st['region']['adm'] == 'upload'
+    assert d['form']['ref_hierarchy'] == [{'column': 'adm_region', 'label': 'region'},
+                                          {'column': 'adm_district', 'label': 'district'}]
+    assert d['ready'] == {'target': True, 'ref': True, 'tagged': True, 'hierarchy_paired': True}
+    b = client.get('/api/boundaries/district').get_json()
+    assert b['adm'] == 'upload' and b['matched'] == 6
+    assert {f['properties']['_ref'] for f in b['geojson']['features']} >= {'alpha', 'gamma'}
     return client
 
 

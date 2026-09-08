@@ -137,7 +137,8 @@ input[type=range] { width: 100%; accent-color: var(--ink); }
 .bounds .row { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; font-size: 13px; }
 .bounds .radio { display: flex; gap: 8px; align-items: center; }
 .bounds .radio input { accent-color: var(--ink); margin: 0; }
-.bounds .lvl { display: grid; grid-template-columns: 120px 1fr 1fr; gap: 12px; align-items: center; font-size: 12px; }
+.bounds .lvl { display: grid; grid-template-columns: 120px 1fr 1.4fr; gap: 12px; align-items: center; font-size: 12px; }
+.bounds .lvl select.input { height: 28px; }
 
 /* ---------- map corridor stages (2, 4) ---------- */
 .mapwrap { position: absolute; inset: 0; }
