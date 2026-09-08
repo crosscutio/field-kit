@@ -14,12 +14,33 @@ import pandas as pd
 from .config import MatcherConfig
 
 
+def norm_id(v) -> str:
+    """Canonical string form of an id: '850.0' -> '850', NaN -> ''."""
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return ''
+    s = str(v)
+    if s.lower() == 'nan':
+        return ''
+    try:
+        f = float(s)
+        if f.is_integer():
+            return str(int(f))
+    except (ValueError, TypeError):
+        pass
+    return s
+
+
 def load_lookup(path: str) -> pd.DataFrame:
-    """Load a lookup table from CSV."""
+    """Load a lookup table from CSV. Id columns are read back as canonical
+    strings so a numeric id never turns into '5.0' on a round trip."""
     p = Path(path)
     if not p.exists():
         return pd.DataFrame()
-    return pd.read_csv(p)
+    df = pd.read_csv(p)
+    for col in ('target_id', 'ref_id'):
+        if col in df.columns:
+            df[col] = df[col].map(norm_id).astype(object)
+    return df
 
 
 def save_lookup(df: pd.DataFrame, path: str):

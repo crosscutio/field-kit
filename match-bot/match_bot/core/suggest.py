@@ -19,7 +19,7 @@ from typing import Callable, Dict, List, Optional
 
 import pandas as pd
 
-from .lookup import load_lookup
+from .lookup import load_lookup, norm_id
 
 _NUM_TOKEN = re.compile(r'\b\d+\b')
 _SCORE_RE = re.compile(r'score\s*=\s*(\d+)')
@@ -208,9 +208,10 @@ def _leaf_suggestion(t, r, score, labels):
         v = t.get(f'target_{lbl}', '')
         if pd.notna(v) and str(v).strip():
             parents[lbl] = str(v).lower()
-    rid = str(r.get('ref_id', ''))
+    rid = norm_id(r.get('ref_id', ''))
+    tid = norm_id(t.get('target_id', ''))
     return {
-        'target_key': str(t.get('target_id', '')), 'target_id': str(t.get('target_id', '')),
+        'target_key': tid, 'target_id': tid,
         'target_name': _leaf_name(t),
         'ref_key': rid, 'ref_id': rid, 'ref_name': str(r.get('ref_name', '')),
         'score': score, 'parents': parents,
@@ -228,7 +229,7 @@ def candidates(config, level, target_key, restrict=True, top=3, pipeline=None) -
     labels = config.hierarchy_labels
     if level == 'leaf':
         tby, rby, df = _leaf_pools(config, labels)
-        rows = df[df['target_id'].astype(str) == str(target_key)] if not df.empty else df
+        rows = df[df['target_id'].map(norm_id) == norm_id(target_key)] if not df.empty else df
         if rows.empty:
             return []
         t = rows.iloc[0]
@@ -273,7 +274,7 @@ def best_scores(config, level='leaf', restrict=True) -> Dict[str, float]:
             pool = rby.get(pk, []) if restrict else all_refs
             for t in ts:
                 name = _leaf_name(t)
-                out[str(t.get('target_id', ''))] = max(
+                out[norm_id(t.get('target_id', ''))] = max(
                     (score_pair(name, r.get('ref_name', '')) for r in pool), default=0.0)
         return out
     i = labels.index(level)

@@ -17,7 +17,7 @@ from typing import Dict, List, Optional
 
 import pandas as pd
 
-from .lookup import load_lookup, save_lookup
+from .lookup import load_lookup, norm_id, save_lookup
 
 AUTO_PREFIXES = ('auto:', 'fuzzy suggest')   # second is the legacy CLI rationale
 MANUAL_PREFIX = 'manual:'
@@ -42,15 +42,7 @@ def _s(v) -> str:
     return '' if v is None or (isinstance(v, float) and pd.isna(v)) else str(v)
 
 
-def _norm_id(v) -> str:
-    s = _s(v)
-    try:
-        f = float(s)
-        if f.is_integer():
-            return str(int(f))
-    except (ValueError, TypeError):
-        pass
-    return s
+_norm_id = norm_id
 
 
 def _metrics(t_name, r_name):
