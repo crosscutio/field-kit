@@ -384,6 +384,29 @@ def _write_gaz_state(session_dir, state):
         json.dump(state, f, indent=2)
 
 
+def _read_form_state(session_dir):
+    path = session_dir / 'form_state.json'
+    if not path.exists():
+        return None
+    try:
+        with open(path, encoding='utf-8') as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _update_form_state(session_dir, **keys):
+    """Merge top-level keys into form_state.json.
+
+    Merge (not overwrite) because two writers touch the file: the client
+    snapshot posts 'form'/'ui', while the upload endpoint records 'files'.
+    """
+    state = _read_form_state(session_dir) or {}
+    state.update(keys)
+    with open(session_dir / 'form_state.json', 'w', encoding='utf-8') as f:
+        json.dump(state, f, indent=2)
+
+
 def _clear_match_outputs(session_dir):
     """Remove match outputs whose target ids reference a replaced points pool.
 
@@ -402,6 +425,11 @@ def create_app():
     """Create and configure the Flask application."""
     app = Flask(__name__)
     app.secret_key = os.urandom(24)
+    # Cookies are domain-scoped, not port-scoped: two GUI instances on different
+    # ports would otherwise overwrite each other's session cookie. Naming the
+    # cookie per-port lets parallel instances coexist in one browser.
+    port = os.environ.get('MATCH_BOT_PORT', '5000')
+    app.config['SESSION_COOKIE_NAME'] = f'match_bot_session_{port}'
 
     upload_base = Path(app.instance_path) / 'uploads'
     upload_base.mkdir(parents=True, exist_ok=True)
@@ -438,28 +466,38 @@ def create_app():
 
     @app.route('/')
     def index():
-        # Clear stale outputs from any previous session so manual hierarchy
-        # mappings don't bleed into a fresh workflow.
-        if 'sid' in session:
-            sd = upload_base / session['sid']
-            lookups_dir = sd / 'output' / 'lookups'
-            if lookups_dir.exists():
-                for f in lookups_dir.iterdir():
-                    if f.is_file():
-                        f.unlink()
         return render_template('index.html', active_tab='match')
 
     @app.route('/geocoding')
     def geocoding():
-        # Same stale-lookup cleanup as the main tab, scoped to the geo dir.
-        if 'sid' in session:
-            sd = upload_base / session['sid'] / 'geocoding'
-            lookups_dir = sd / 'output' / 'lookups'
-            if lookups_dir.exists():
-                for f in lookups_dir.iterdir():
-                    if f.is_file():
-                        f.unlink()
         return render_template('geocoding.html', active_tab='geocoding')
+
+    @app.route('/api/reset', methods=['POST'])
+    def api_reset():
+        """Explicitly start a new project for one tab.
+
+        Replaces the old page-load lookup purge: without this, a different
+        dataset loaded in the same sticky session would inherit the previous
+        dataset's lookup rewrites (load_lookups applies them unconditionally).
+        """
+        mode = _request_mode()
+        sd = _get_session_dir(mode)
+        if mode == 'geo':
+            shutil.rmtree(sd, ignore_errors=True)
+            sd.mkdir(parents=True, exist_ok=True)
+        else:
+            # The geocoding tab's dir is nested inside this one — keep it.
+            for child in sd.iterdir():
+                if child.name == 'geocoding':
+                    continue
+                if child.is_dir():
+                    shutil.rmtree(child, ignore_errors=True)
+                else:
+                    child.unlink()
+        prefix = 'geo_' if mode else ''
+        for key in (f'{prefix}ref_ext', f'{prefix}target_ext'):
+            session.pop(key, None)
+        return jsonify({'ok': True})
 
     @app.route('/api/columns', methods=['POST'])
     def api_columns():
@@ -498,16 +536,94 @@ def create_app():
         file.save(str(save_path))
         if not needs_reblend:
             session[f'{"geo_" if mode else ""}{prefix}_ext'] = ext
+        if mode != 'geo' and prefix == 'target':
+            # A new target invalidates pre-dissolved layers, which are
+            # otherwise served as-is (see _predissolve_geojson early return).
+            for p in (sd / 'output').glob('dissolved_*.geojson'):
+                p.unlink()
 
         try:
             cols = get_columns(str(save_path))
         except Exception as e:
             return jsonify({'error': f'Failed to read file: {e}'}), 400
 
+        # Record the original filename so a reloaded page can restore the
+        # file chips (the browser-side name is otherwise lost on navigation).
+        files = (_read_form_state(sd) or {}).get('files') or {}
+        files['user_points' if needs_reblend else prefix] = {
+            'name': file.filename, 'ext': ext,
+        }
+        _update_form_state(sd, files=files)
+
         return jsonify({
             'columns': cols,
             'filename': file.filename,
             'needs_reblend': needs_reblend,
+        })
+
+    @app.route('/api/state', methods=['GET', 'POST'])
+    def api_state():
+        """Session persistence for page reloads and tab switches.
+
+        POST stores the client's form snapshot verbatim (keys 'form'/'ui');
+        GET returns everything a freshly loaded page needs to restore itself.
+        Concurrent browser tabs are last-writer-wins, which is acceptable for
+        a single-user local tool.
+        """
+        mode = _request_mode()
+        sd = _get_session_dir(mode)
+
+        if request.method == 'POST':
+            body = request.get_json(silent=True) or {}
+            updates = {k: body[k] for k in ('form', 'ui') if k in body}
+            if updates:
+                _update_form_state(sd, **updates)
+            return jsonify({'ok': True})
+
+        state = _read_form_state(sd) or {}
+        files_meta = state.get('files') or {}
+
+        def _file_info(prefix):
+            meta = files_meta.get(prefix) or {}
+            if prefix == 'user_points':
+                path = sd / 'user_points.csv'
+            else:
+                ext = meta.get('ext') or session.get(
+                    f'{"geo_" if mode else ""}{prefix}_ext') or '.csv'
+                path = sd / f'{prefix}{ext}'
+                if not path.exists() and prefix == 'target':
+                    for cand in ('.csv', '.geojson'):
+                        if (sd / f'target{cand}').exists():
+                            path = sd / f'target{cand}'
+                            break
+            if not path.exists():
+                return None
+            info = {'name': meta.get('name') or path.name, 'ext': path.suffix}
+            try:
+                info['columns'] = get_columns(str(path))
+            except Exception:
+                info['columns'] = None
+            return info
+
+        files = {p: _file_info(p) for p in ('ref', 'target', 'user_points')}
+        out = sd / 'output'
+        lookups_dir = out / 'lookups'
+        lookups = sorted(
+            p.stem[: -len('_lookup')]
+            for p in lookups_dir.glob('*_lookup.csv')
+            if p.stem != 'leaf_lookup'
+        ) if lookups_dir.exists() else []
+        return jsonify({
+            'exists': bool(state) or any(files.values()),
+            'form': state.get('form'),
+            'ui': state.get('ui'),
+            'files': files,
+            'gaz': _read_gaz_state(sd),
+            'outputs': {
+                'matched': (out / 'matched.csv').exists(),
+                'geocoded': (out / 'geocoded.csv').exists(),
+                'lookups': lookups,
+            },
         })
 
     @app.route('/api/run/<action>', methods=['POST'])
@@ -672,8 +788,8 @@ def create_app():
         # second pass over the same dataset starts with parents settled.
         restored = 0
         crosswalk = form_data.get('crosswalk') or {}
-        if crosswalk and _request_mode() == 'geo':
-            sd = _get_session_dir('geo')
+        if crosswalk:
+            sd = _get_session_dir(_request_mode())
             lookups_dir = sd / 'output' / 'lookups'
             lookups_dir.mkdir(parents=True, exist_ok=True)
             for label, entries in crosswalk.items():
@@ -706,16 +822,17 @@ def create_app():
             return jsonify({'error': 'No form data provided'}), 400
 
         # Embed the session's hand-made crosswalk links so the config carries
-        # the parent-level reconciliation, not just the settings.
-        if _request_mode() == 'geo':
-            sd = _get_session_dir('geo')
+        # the parent-level reconciliation, not just the settings. Labels come
+        # from the lookup files on disk, not the client payload — a page
+        # reloaded before restore sends empty ref_hierarchy.
+        mode = _request_mode()
+        sd = _get_session_dir(mode)
+        lookups_dir = sd / 'output' / 'lookups'
+        if lookups_dir.exists():
             crosswalk = {}
-            for h in data.get('ref_hierarchy', []) or []:
-                label = h.get('label', '')
-                if not label:
-                    continue
-                path = sd / 'output' / 'lookups' / f'{label}_lookup.csv'
-                if not path.exists():
+            for path in sorted(lookups_dir.glob('*_lookup.csv')):
+                label = path.stem[: -len('_lookup')]
+                if label == 'leaf':  # different schema, not a crosswalk
                     continue
                 try:
                     df = pd.read_csv(path, dtype=str).fillna('')
@@ -737,6 +854,14 @@ def create_app():
                     crosswalk[label] = entries
             if crosswalk:
                 data['crosswalk'] = crosswalk
+
+        # A reloaded page reports no gazetteer selection (gazActive is
+        # client-side); fall back to the persisted build record.
+        if mode == 'geo' and not data.get('gaz_country'):
+            gaz_state = _read_gaz_state(sd)
+            if gaz_state:
+                data['gaz_country'] = gaz_state.get('iso3', '')
+                data['gaz_admin1'] = gaz_state.get('admin1', [])
 
         yaml_str = form_data_to_yaml(data)
         return (
@@ -1524,6 +1649,7 @@ def create_app():
             'skip_osm_admins': skip_osm,
             'user_columns': user_columns,
             'combined': user_df is not None,
+            'total': int(len(combined)),
         })
         _clear_match_outputs(sd)
 

@@ -445,6 +445,8 @@ class LevelState:
         labels = [s['label'] for s in self.hier_specs]
         resolved = self._resolved_sets(len(self.hier_specs))
 
+        parent_lbl = labels[-1] if labels else None
+
         rows = []
         for _, m in matched.iterrows():
             name = str(m.get('_ref_name_raw', '') or m.get('_ref_name', ''))
@@ -458,6 +460,7 @@ class LevelState:
                 'name': name, 'level': 'leaf', 'target': target,
                 'method': method, 'score': score,
                 'blocked': False, 'guess': None, 'guess_score': None,
+                'parent': str(m.get(f'_ref_{parent_lbl}', '') or '') if parent_lbl else '',
             })
 
         if not un_ref.empty and '_ref_id' in un_ref.columns:
@@ -466,18 +469,19 @@ class LevelState:
                 chain = tuple(
                     _std(r.get(f'_ref_{lbl}', ''), self.case, self.accents)
                     for lbl in labels)
-                blocked = any(
-                    chain[j] and chain[j] not in resolved[j]
-                    for j in range(len(labels)))
+                j_block = next(
+                    (j for j in range(len(labels))
+                     if chain[j] and chain[j] not in resolved[j]), None)
+                blocked = j_block is not None
                 name = str(r.get('_ref_name_raw', '') or r.get('_ref_name', ''))
                 row = {
                     'ref_id': str(r.get('_ref_id', '')),
                     'name': name, 'level': 'leaf', 'target': None,
                     'method': None, 'score': None,
                     'blocked': blocked, 'guess': None, 'guess_score': None,
-                    'blocked_on': next(
-                        (labels[j] for j in range(len(labels))
-                         if chain[j] and chain[j] not in resolved[j]), None),
+                    'blocked_on': labels[j_block] if blocked else None,
+                    'blocked_parent': str(r.get(f'_ref_{labels[j_block]}', '') or '') if blocked else None,
+                    'parent': str(r.get(f'_ref_{parent_lbl}', '') or '') if parent_lbl else '',
                 }
                 if not blocked:
                     best, best_score, _tid, _lat, _lon = self._best_leaf_candidate(
@@ -541,6 +545,13 @@ class LevelState:
                 continue
             lat, lon = coords.get(cand['target_id'], ('', ''))
             meta_bits = [b for b in cand['chain'] if b]
+            # Coordinates distinguish same-name points (near-duplicate
+            # gazetteer entries are common); the picker shows meta verbatim.
+            if lat and lon:
+                try:
+                    meta_bits.append(f'{float(lat):.4f}, {float(lon):.4f}')
+                except (TypeError, ValueError):
+                    pass
             cands.append({
                 'name': cand['name'],
                 'target_id': cand['target_id'],

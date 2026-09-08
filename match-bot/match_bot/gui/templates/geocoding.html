@@ -16,7 +16,7 @@
 <button class="project-btn" id="project-btn" title="Project setup">
   <span class="dot dot-brand"></span>
   <span id="project-display">Untitled</span>
-  <span style="color:#777;font-size:9px;">&#9662;</span>
+  <span style="color:var(--text-muted);font-size:10px;">&#9662;</span>
 </button>
 {% endblock %}
 
@@ -87,6 +87,7 @@
     </div>
 
     <div class="strip-right">
+      <button class="gbtn gbtn-ghost" data-act="new-project" title="Clear this tab's uploads, results, and crosswalk links">New project</button>
       <button class="gbtn gbtn-brand" data-act="sheet-open">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
         Full setup
@@ -109,15 +110,19 @@
       <!-- shown while working a non-leaf level -->
       <div class="map-scrim hidden" id="mapScrim">
         <div class="map-scrim-card">
-          <h3>Nothing to place at this level</h3>
-          <p>You&rsquo;re linking <span class="mono" id="scrimLevel">region</span> names to
-             gazetteer names. The map comes back at the leaf level, where matches
-             become coordinates.</p>
+          <h3>Use the table below to finish matching at the
+             <span class="mono" id="scrimLevel">region</span> level</h3>
+          <p>The map will become available once you finish harmonizing
+             <span class="mono" id="scrimLevel2">region</span> and start linking
+             names to specific points on the map.</p>
         </div>
       </div>
 
       <div class="map-tools" id="mapTools">
-        <button class="map-tool" title="Toggle basemap" data-act="map-basemap"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="1 6 8 3 16 6 23 3 23 18 16 21 8 18 1 21 1 6"/><line x1="8" y1="3" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="21"/></svg></button>
+        <div class="basemap-wrap" id="basemapWrap">
+          <button class="map-tool" title="Choose basemap" data-act="map-basemap"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="1 6 8 3 16 6 23 3 23 18 16 21 8 18 1 21 1 6"/><line x1="8" y1="3" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="21"/></svg></button>
+          <div class="basemap-menu hidden" id="basemapMenu"></div>
+        </div>
         <button class="map-tool" title="Fit to data" data-act="map-fit"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></svg></button>
       </div>
 
@@ -149,7 +154,7 @@
         </div>
       </div>
       <div class="drawer-body">
-        <div class="grid-row grid-head">
+        <div class="grid-row grid-head" id="gridHead">
           <span>Level</span><span>Reference value</span><span>Linked to</span><span>Method</span><span></span>
         </div>
         <div id="rows"></div>
@@ -253,38 +258,12 @@
         <!-- POINTS -->
         <section data-pane="pts" class="hidden">
           <h3 class="pane-h">Points dataset</h3>
-          <p class="pane-sub">Candidate locations with coordinates &mdash; a gazetteer built
-             from GeoNames and OpenStreetMap, or your own CSV.</p>
-
-          <div class="file-card">
-            <span class="ic" style="background:var(--blue-50);color:var(--blue-700);font-size:11px;font-weight:700;">P</span>
-            <span class="meta"><b id="gazDesc" style="font-family:var(--font-body);">Gazetteer</b><i id="gazMeta">pick a country, then admin areas</i></span>
-          </div>
-          <div style="display:flex;gap:8px;align-items:flex-end;margin-top:12px;flex-wrap:wrap;">
-            <div style="min-width:220px;">
-              <div class="field-label">Country</div>
-              <select class="gselect" id="gaz_country"><option value="">-- select country --</option></select>
-            </div>
-            <button type="button" class="gbtn" id="gaz-load-admin">Load admin areas</button>
-          </div>
-          <div id="gaz-admin-wrap" class="hidden">
-            <div class="gaz-admin-list" id="gaz-admin-list"></div>
-            <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;">
-              <button type="button" class="gbtn gbtn-sm" id="gaz-select-all">Select all</button>
-              <span class="pane-note-sm" style="margin-top:0;" id="gaz-preview"></span>
-            </div>
-            <div style="display:flex;gap:8px;align-items:center;margin-top:8px;">
-              <button type="button" class="gbtn gbtn-primary" id="gaz-add">Add gazetteer points</button>
-              <button type="button" class="gbtn hidden" id="gaz-remove">Remove gazetteer points</button>
-            </div>
-          </div>
-          <p class="pane-note-sm">Identifiers come from the source &mdash; <span class="mono">point_id</span>
-             is generated per place, so there is nothing to choose. Upload a CSV instead and
-             you pick its ID, name, latitude and longitude columns below.</p>
+          <p class="pane-sub">The potential locations the tool will try to match to your
+             named locations.</p>
 
           <div class="file-card">
             <span class="ic" id="ptsFileIc" style="background:var(--neutral-150);color:var(--text-muted);">&mdash;</span>
-            <span class="meta"><b id="ptsFileName">no CSV uploaded</b><i>Optional: your own points, blended with the gazetteer if one is active</i></span>
+            <span class="meta"><b id="ptsFileName">no CSV uploaded</b><i>Your own points with coordinates, blended with the gazetteer if one is active</i></span>
             <label class="gbtn" style="margin-bottom:0;">Choose CSV<input type="file" id="target_file" accept=".csv" hidden></label>
           </div>
           <div class="sheet-grid-4">
@@ -305,6 +284,37 @@
               <select class="gselect mono" id="geo_lon_column"><option value="">--</option></select>
             </div>
           </div>
+
+          <div class="gaz-section">
+            <h4 class="gaz-section-h">No points dataset? Build a gazetteer</h4>
+            <p class="pane-sub">If you don&rsquo;t have a dataset with potential locations,
+               the tool will build one for you from data sources such as GeoNames and
+               OpenStreetMap.</p>
+            <div class="file-card">
+              <span class="ic" style="background:var(--blue-50);color:var(--blue-700);font-size:var(--text-2xs);font-weight:700;">P</span>
+              <span class="meta"><b id="gazDesc" style="font-family:var(--font-body);">Gazetteer</b><i id="gazMeta">pick a country, then admin areas</i></span>
+            </div>
+            <div style="display:flex;gap:8px;align-items:flex-end;margin-top:12px;flex-wrap:wrap;">
+              <div style="min-width:220px;">
+                <div class="field-label">Country</div>
+                <select class="gselect" id="gaz_country"><option value="">-- select country --</option></select>
+              </div>
+              <button type="button" class="gbtn" id="gaz-load-admin">Load admin areas</button>
+            </div>
+            <div id="gaz-admin-wrap" class="hidden">
+              <div class="gaz-admin-list" id="gaz-admin-list"></div>
+              <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;">
+                <button type="button" class="gbtn gbtn-sm" id="gaz-select-all">Select all</button>
+                <span class="pane-note-sm" style="margin-top:0;" id="gaz-preview"></span>
+              </div>
+              <div style="display:flex;gap:8px;align-items:center;margin-top:8px;">
+                <button type="button" class="gbtn gbtn-primary" id="gaz-add">Add gazetteer points</button>
+                <button type="button" class="gbtn hidden" id="gaz-remove">Remove gazetteer points</button>
+              </div>
+            </div>
+            <p class="pane-note-sm">Identifiers come from the source &mdash; <span class="mono">point_id</span>
+               is generated per place, so there are no columns to choose.</p>
+          </div>
         </section>
 
         <!-- CONFIG -->
@@ -317,7 +327,7 @@
             <input type="text" class="ginput" id="project_name" value="Untitled">
           </div>
           <div class="file-card">
-            <span class="ic mono" style="background:var(--neutral-150);color:var(--neutral-700);font-size:9.5px;font-weight:700;">YML</span>
+            <span class="ic mono" style="background:var(--neutral-150);color:var(--neutral-700);font-size:var(--text-2xs);font-weight:700;">YML</span>
             <span class="meta"><b id="cfgFileName">config.yaml</b><i id="crosswalkNote">No hand-made crosswalk links yet</i></span>
             <label class="gbtn" style="margin-bottom:0;">Load&hellip;<input type="file" id="load_config_file" accept=".yaml,.yml" hidden></label>
             <button type="button" class="gbtn" id="save_config_btn">Save</button>
@@ -520,6 +530,7 @@ function render() {
   renderSheetNav();
   renderStatus();
   renderMapChrome();
+  scheduleSnapshot();  // every state-changing action ends in render()
 }
 
 function renderLadder() {
@@ -567,6 +578,15 @@ function renderRows() {
   const host = $('rows');
   host.innerHTML = '';
 
+  // Leaf table leads with the immediate parent's value when a hierarchy exists
+  const parentLbl = (lvl === 'leaf' && levelDefs.length && levelDefs[levelDefs.length - 1].label)
+    ? levelDefs[levelDefs.length - 1].label : null;
+  const head = $('gridHead');
+  head.className = 'grid-row grid-head' + (parentLbl ? ' grid-leaf' : '');
+  head.innerHTML = parentLbl
+    ? '<span>' + escapeHtml(parentLbl) + '</span><span>Reference value</span><span>Level</span><span>Linked to</span><span>Method</span><span></span>'
+    : '<span>Level</span><span>Reference value</span><span>Linked to</span><span>Method</span><span></span>';
+
   $('drawerH').textContent = lvl === 'leaf' ? 'Leaf level' : lvl + ' level';
   $('drawerHint').textContent = lvl === 'leaf'
     ? 'Matches here become coordinates'
@@ -609,28 +629,35 @@ function renderRows() {
   ordered.forEach(r => {
     const div = document.createElement('div');
     const rid = lvl === 'leaf' ? r.ref_id : r.key;
-    div.className = 'grid-row row' + (r.method ? '' : (r.blocked ? ' row-blocked' : ' row-open'));
-    if (r.method) {
-      div.innerHTML =
-        '<span class="lvl-tag">' + escapeHtml(lvl) + '</span>'
+    div.className = 'grid-row row' + (parentLbl ? ' grid-leaf' : '')
+      + (r.method ? '' : (r.blocked ? ' row-blocked' : ' row-open'));
+    const lead = parentLbl
+      ? '<span class="parent">' + escapeHtml(r.parent || '') + '</span>'
         + '<span class="ref">' + escapeHtml(r.name) + '</span>'
+        + '<span class="lvl-tag">' + escapeHtml(lvl) + '</span>'
+      : '<span class="lvl-tag">' + escapeHtml(lvl) + '</span>'
+        + '<span class="ref">' + escapeHtml(r.name) + '</span>';
+    if (r.method) {
+      div.innerHTML = lead
         + '<span class="target">' + escapeHtml(r.target || '') + '</span>'
         + '<span><span class="method method-' + r.method + '">' + r.method
         + (r.method === 'fuzzy' && r.score != null ? ' ' + r.score : '') + '</span></span>'
         + '<span class="act"><button class="gbtn gbtn-sm gbtn-ghost" data-unlink="' + escapeAttr(rid) + '">Unlink</button></span>';
     } else if (r.blocked) {
-      div.innerHTML =
-        '<span class="lvl-tag">' + escapeHtml(lvl) + '</span>'
-        + '<span class="ref">' + escapeHtml(r.name) + '</span>'
-        + '<span class="note">waiting on ' + escapeHtml(r.blocked_on || 'parent') + '</span>'
+      const blockLvl = r.blocked_on || 'parent';
+      const article = /^[aeiou]/i.test(blockLvl) ? 'an' : 'a';
+      const msg = r.blocked_parent
+        ? 'Link ' + escapeHtml(r.blocked_parent) + ' to ' + article + ' '
+          + escapeHtml(blockLvl) + ' from the Points dataset to proceed.'
+        : 'waiting on ' + escapeHtml(blockLvl);
+      div.innerHTML = lead
+        + '<span class="note">' + msg + '</span>'
         + '<span></span><span></span>';
     } else {
       const guess = r.guess != null
         ? 'best guess <span class="mono">' + escapeHtml(r.guess) + '</span> · ' + r.guess_score
         : 'no candidate in scope';
-      div.innerHTML =
-        '<span class="lvl-tag">' + escapeHtml(lvl) + '</span>'
-        + '<span class="ref">' + escapeHtml(r.name) + '</span>'
+      div.innerHTML = lead
         + '<span class="target guess">' + guess + '</span>'
         + '<span><span class="method method-below">below cut</span></span>'
         + '<span class="act"><button class="gbtn gbtn-sm gbtn-link-open" data-open="' + escapeAttr(rid) + '">'
@@ -714,7 +741,7 @@ function renderLevelTable() {
       + '<input class="ginput mono" type="number" min="0" max="100" value="' + threshold(d.label) + '" data-lvl-thresh="' + escapeAttr(d.label) + '">'
       + '<div class="status"><span class="s">' + status + '</span>'
       + '<button class="gbtn gbtn-sm" data-lvl-rerun="' + escapeAttr(d.label) + '">Rerun</button></div>'
-      + '<button class="x-btn" style="width:22px;height:22px;font-size:13px;" data-lvl-remove="' + i + '" title="Remove level">&times;</button>';
+      + '<button class="x-btn" style="width:22px;height:22px;font-size:var(--text-sm);" data-lvl-remove="' + i + '" title="Remove level">&times;</button>';
     host.appendChild(row);
   });
 
@@ -812,6 +839,7 @@ function renderMapChrome() {
   const onLeaf = lvl === 'leaf';
   $('mapScrim').classList.toggle('hidden', onLeaf);
   $('scrimLevel').textContent = lvl;
+  $('scrimLevel2').textContent = lvl;
   $('mapTools').classList.toggle('hidden', !onLeaf);
   $('legend').classList.toggle('hidden', !onLeaf || !pointsLayer);
   if (map) setTimeout(() => map.invalidateSize(), 60);
@@ -885,8 +913,10 @@ function renderPicker() {
   shown.forEach(c => {
     const b = document.createElement('button');
     b.className = 'cand';
-    b.setAttribute('aria-selected', String(!!S.sel && S.sel.name === c.name));
-    b.dataset.cand = c.name;
+    // Identify by position, not name — the pool can hold several points
+    // sharing one name (near-duplicate gazetteer entries).
+    b.setAttribute('aria-selected', String(S.sel === c));
+    b.dataset.cand = String(S.candidates.indexOf(c));
     b.innerHTML = '<span class="radio"></span><span class="t"><b>' + escapeHtml(c.name)
       + '</b><i>' + escapeHtml(c.meta || '') + (c.linked ? ' · already linked' : '') + '</i></span>'
       + '<span class="score">' + c.score + '</span>';
@@ -1389,6 +1419,31 @@ function exportGeocoded() {
 /* ============================================================
    Config YAML
    ============================================================ */
+/* Populate the form from a config/snapshot form-data object. Shared by the
+   Load Config handler and the page-load session restore. */
+function applyFormData(fd) {
+  $('project_name').value = fd.project_name || '';
+  $('case').value = fd.case || 'lower';
+  $('remove_accents').checked = fd.remove_accents !== false;
+  $('levenshtein_distance_threshold').value = fd.levenshtein_distance_threshold || 1;
+  $('levenshtein_score_threshold').value = fd.levenshtein_score_threshold || 0.25;
+  $('validate_numbers').checked = fd.validate_numbers !== false;
+  if (fd.level_thresholds) S.thresholds = { leaf: 70, ...fd.level_thresholds };
+
+  if (fd.ref_id_column) setSelectValue('ref_id_column', fd.ref_id_column);
+  if (fd.ref_name_column) setSelectValue('ref_name_column', fd.ref_name_column);
+  if (fd.target_id_column) setSelectValue('target_id_column', fd.target_id_column);
+  if (fd.target_name_column) setSelectValue('target_name_column', fd.target_name_column);
+  if (fd.geo_lat_column) setSelectValue('geo_lat_column', fd.geo_lat_column);
+  if (fd.geo_lon_column) setSelectValue('geo_lon_column', fd.geo_lon_column);
+
+  // Rebuild the level pairing list from the two hierarchies (paired by label)
+  levelDefs = (fd.ref_hierarchy || []).map(h => {
+    const tgt = (fd.target_hierarchy || []).find(t => t.label === h.label) || {};
+    return { label: h.label, refCol: h.column, targetCol: tgt.column || '' };
+  });
+}
+
 $('load_config_file').addEventListener('change', function () {
   const file = this.files[0];
   if (!file) return;
@@ -1401,26 +1456,7 @@ $('load_config_file').addEventListener('change', function () {
     .then(data => {
       if (data.error) { alert(data.error); return; }
       const fd = data.form_data;
-      $('project_name').value = fd.project_name || '';
-      $('case').value = fd.case || 'lower';
-      $('remove_accents').checked = fd.remove_accents !== false;
-      $('levenshtein_distance_threshold').value = fd.levenshtein_distance_threshold || 1;
-      $('levenshtein_score_threshold').value = fd.levenshtein_score_threshold || 0.25;
-      $('validate_numbers').checked = fd.validate_numbers !== false;
-      if (fd.level_thresholds) S.thresholds = { leaf: 70, ...fd.level_thresholds };
-
-      if (fd.ref_id_column) setSelectValue('ref_id_column', fd.ref_id_column);
-      if (fd.ref_name_column) setSelectValue('ref_name_column', fd.ref_name_column);
-      if (fd.target_id_column) setSelectValue('target_id_column', fd.target_id_column);
-      if (fd.target_name_column) setSelectValue('target_name_column', fd.target_name_column);
-      if (fd.geo_lat_column) setSelectValue('geo_lat_column', fd.geo_lat_column);
-      if (fd.geo_lon_column) setSelectValue('geo_lon_column', fd.geo_lon_column);
-
-      // Rebuild the level pairing list from the two hierarchies (paired by label)
-      levelDefs = (fd.ref_hierarchy || []).map(h => {
-        const tgt = (fd.target_hierarchy || []).find(t => t.label === h.label) || {};
-        return { label: h.label, refCol: h.column, targetCol: tgt.column || '' };
-      });
+      applyFormData(fd);
 
       logLine('Config loaded from ' + file.name
         + (data.crosswalk_restored ? ' — ' + data.crosswalk_restored + ' crosswalk link(s) restored' : ''));
@@ -1472,7 +1508,7 @@ let map = null;
 let pointsLayer = null;
 let pointMarkers = {};
 let mapFitted = false;
-let basemapDark = false;
+let basemapKey = 'light';
 let tileLayer = null;
 
 const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -1487,9 +1523,11 @@ function pointStyle(props) {
 }
 
 const TILES = {
-  light: { url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', opts: { subdomains: 'abcd', maxZoom: 19, attribution: '&copy; OpenStreetMap contributors &copy; CARTO' } },
-  osm: { url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', opts: { attribution: '&copy; OpenStreetMap contributors' } },
+  light: { label: 'Light', url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', opts: { subdomains: 'abcd', maxZoom: 19, attribution: '&copy; OpenStreetMap contributors &copy; CARTO' } },
+  osm: { label: 'Streets', url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', opts: { maxZoom: 19, attribution: '&copy; OpenStreetMap contributors' } },
+  satellite: { label: 'Satellite', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', opts: { maxZoom: 19, attribution: 'Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community' } },
 };
+const BASEMAP_ORDER = ['light', 'osm', 'satellite'];
 
 function ensureMap() {
   if (map) return;
@@ -1559,12 +1597,28 @@ function fitToData() {
   }
 }
 
-function toggleBasemap() {
-  if (!map) return;
-  basemapDark = !basemapDark;
+function toggleBasemapMenu() {
+  const menu = $('basemapMenu');
+  if (menu.classList.contains('hidden')) renderBasemapMenu();
+  menu.classList.toggle('hidden');
+}
+
+function renderBasemapMenu() {
+  $('basemapMenu').innerHTML = BASEMAP_ORDER.map(k =>
+    '<button class="basemap-item" data-act="basemap-set" data-basemap="' + k + '"'
+    + (k === basemapKey ? ' aria-current="true"' : '')
+    + '>' + TILES[k].label + '</button>').join('');
+}
+
+function setBasemap(key) {
+  $('basemapMenu').classList.add('hidden');
+  if (!map || !TILES[key] || key === basemapKey) return;
+  basemapKey = key;
   map.removeLayer(tileLayer);
-  const t = basemapDark ? TILES.osm : TILES.light;
+  const t = TILES[key];
   tileLayer = L.tileLayer(t.url, t.opts).addTo(map);
+  const btn = document.querySelector('[data-act="map-basemap"]');
+  if (btn) btn.title = 'Basemap: ' + t.label;
 }
 
 /* ---- leaf map-pin mode ---- */
@@ -1644,6 +1698,7 @@ function setSheetSection(sec) {
 }
 
 document.addEventListener('click', e => {
+  if (!e.target.closest('#basemapWrap')) $('basemapMenu').classList.add('hidden');
   const t = e.target.closest('[data-act],[data-open],[data-unlink],[data-cand],[data-sec],'
     + '[data-lvl-rerun],[data-lvl-remove]');
   if (!t) {
@@ -1666,7 +1721,19 @@ document.addEventListener('click', e => {
   if (act === 'export') return exportGeocoded();
   if (act === 'log-toggle') return $('logCard').classList.toggle('hidden');
   if (act === 'map-fit') return fitToData();
-  if (act === 'map-basemap') return toggleBasemap();
+  if (act === 'map-basemap') return toggleBasemapMenu();
+  if (act === 'basemap-set') return setBasemap(t.dataset.basemap);
+  if (act === 'new-project') {
+    if (!confirm('Start a new project? This clears uploads, match results, manual pins, and crosswalk links for the Geocoding tab.')) return;
+    clearTimeout(snapTimer);
+    booted = false;  // suppress in-flight snapshots during teardown
+    fetch(withMode('/api/reset'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: 'geo' }),
+    }).then(() => location.reload());
+    return;
+  }
   if (act === 'add-level') {
     levelDefs.push({ label: 'level' + (levelDefs.length + 1), refCol: '', targetCol: '' });
     renderLevelTable();
@@ -1676,7 +1743,7 @@ document.addEventListener('click', e => {
   if (t.dataset.open !== undefined) return openPicker(t.dataset.open);
   if (t.dataset.unlink !== undefined) return unlinkRow(t.dataset.unlink);
   if (t.dataset.cand !== undefined) {
-    S.sel = S.candidates.find(c => c.name === t.dataset.cand) || null;
+    S.sel = S.candidates[parseInt(t.dataset.cand, 10)] || null;
     return renderPicker();
   }
   if (t.dataset.lvlRerun !== undefined) return rerunLevel(t.dataset.lvlRerun);
@@ -1815,8 +1882,107 @@ function chatSendMessage() {
 chatSend.addEventListener('click', chatSendMessage);
 chatInput.addEventListener('keydown', e => { if (e.key === 'Enter') chatSendMessage(); });
 
+/* ============================================================
+   Session persistence — survive reloads/tab switches while the
+   app runs. Snapshots are last-writer-wins across browser tabs.
+   ============================================================ */
+let booted = false, snapTimer = null;
+
+function scheduleSnapshot() {
+  if (!booted) return;
+  clearTimeout(snapTimer);
+  snapTimer = setTimeout(() => {
+    fetch(withMode('/api/state'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        mode: 'geo',
+        form: collectFormData(),
+        ui: { level: S.level, gazActive: gazActive, gazInfo: gazInfo, refFile: refFile, ptsFile: ptsFile },
+      }),
+    }).catch(() => {});
+  }, 800);
+}
+document.addEventListener('change', scheduleSnapshot);
+document.addEventListener('input', scheduleSnapshot);
+
+function restoreSession() {
+  return fetch(withMode('/api/state'))
+    .then(r => r.json())
+    .then(st => {
+      if (!st.exists) return;
+      const ui = st.ui || {};
+      if (st.files.ref) {
+        columns.ref = st.files.ref.columns || [];
+        refFile = st.files.ref.name;
+        $('refFileName').textContent = refFile;
+        $('refFileMeta').textContent = columns.ref.length + ' columns';
+        $('refFileIc').style.background = 'var(--green-50)';
+        $('refFileIc').style.color = 'var(--green-700)';
+        $('refFileIc').innerHTML = '&#10003;';
+        populateSelect('ref_id_column', columns.ref);
+        populateSelect('ref_name_column', columns.ref);
+      }
+      if (st.gaz) {
+        // A gazetteer pool is on disk; target.csv is the blended pool.
+        const pendingReblend = st.gaz.user_columns === null && st.files.user_points;
+        gazActive = true;
+        gazInfo = { country: st.gaz.iso3, total: st.gaz.total || (ui.gazInfo && ui.gazInfo.total) || 0 };
+        if (st.files.target && st.files.target.columns) {
+          columns.target = st.files.target.columns;
+          populateSelect('target_id_column', columns.target);
+          populateSelect('target_name_column', columns.target);
+          populateLatLon(columns.target);
+        }
+        $('gazDesc').textContent = st.gaz.iso3 + ' gazetteer';
+        $('gazMeta').textContent = gazInfo.total + ' points — generated schema; remove gazetteer points to edit columns';
+        $('gaz-add').textContent = 'Update gazetteer points';
+        $('gaz-remove').classList.remove('hidden');
+        if (st.files.user_points) {
+          ptsFile = st.files.user_points.name;
+          $('ptsFileName').textContent = ptsFile;
+        }
+        if (pendingReblend) {
+          logLine('Uploaded points are not yet blended — map your columns, then click "Update gazetteer points".');
+          $('logCard').classList.remove('hidden');
+        } else {
+          ['target_id_column', 'target_name_column', 'geo_lat_column', 'geo_lon_column']
+            .forEach(id => { $(id).disabled = true; });
+        }
+        // Best-effort: re-check the admin boxes (the pool is already on disk,
+        // so a failure here must not block the rest of the restore).
+        setSelectValue('gaz_country', st.gaz.iso3);
+        loadGazAdmin().then(ok => {
+          if (!ok) return;
+          const wanted = new Set(st.gaz.admin1 || []);
+          document.querySelectorAll('.gaz-admin-check').forEach(b => { b.checked = wanted.has(b.value); });
+        }).catch(() => {});
+      } else if (st.files.target) {
+        columns.target = st.files.target.columns || [];
+        ptsFile = st.files.target.name;
+        $('ptsFileName').textContent = ptsFile;
+        $('ptsFileIc').style.background = 'var(--green-50)';
+        $('ptsFileIc').style.color = 'var(--green-700)';
+        $('ptsFileIc').innerHTML = '&#10003;';
+        populateSelect('target_id_column', columns.target);
+        populateSelect('target_name_column', columns.target);
+        populateLatLon(columns.target);
+      }
+      if (st.form) applyFormData(st.form);
+      if (ui.level) S.level = ui.level;
+      logLine('Session restored.');
+    })
+    .catch(() => {})
+    .finally(() => {
+      booted = true;
+      mapFitted = false;
+      render();
+      refreshPoints();
+      refreshLevels();
+    });
+}
+
 /* ---------- boot ---------- */
-render();
-refreshLevels();
+restoreSession();
 </script>
 {% endblock %}

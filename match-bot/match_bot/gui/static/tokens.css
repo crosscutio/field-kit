@@ -167,13 +167,13 @@
   --font-heading: var(--font-display);
   --font-body:    var(--font-sans);
 
-  --text-2xs:  9.5px;
-  --text-xs:   10.5px;
-  --text-sm:   11.5px;
-  --text-base: 13px;
-  --text-lg:   15px;
-  --text-xl:   17px;
-  --text-2xl:  20px;
+  --text-2xs:  11px;
+  --text-xs:   12px;
+  --text-sm:   13px;
+  --text-base: 14px;
+  --text-lg:   16px;
+  --text-xl:   18px;
+  --text-2xl:  21px;
 
   --weight-regular:   400;
   --weight-medium:    500;

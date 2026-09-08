@@ -95,14 +95,14 @@ body.app-geocoding {
   flex-shrink: 0;
 }
 .chip-badge {
-  width: 15px;
-  height: 15px;
+  width: 18px;
+  height: 18px;
   border-radius: var(--radius-xs);
   flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 8px;
+  font-size: 10px;
   font-weight: var(--weight-bold);
 }
 .badge-ref { background: var(--orange-200); color: var(--orange-700); }
@@ -184,15 +184,15 @@ body.app-geocoding {
 .lvl-done { background: var(--green-50); border-color: var(--green-200); color: var(--green-700); }
 .lvl-done:hover { background: var(--green-100); }
 .lvl-check {
-  width: 13px;
-  height: 13px;
+  width: 15px;
+  height: 15px;
   border-radius: 50%;
   background: var(--green-400);
   color: var(--neutral-0);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 8px;
+  font-size: 10px;
   flex-shrink: 0;
 }
 .lvl-idle { border-style: dashed; color: var(--text-muted); }
@@ -230,7 +230,7 @@ body.app-geocoding {
 }
 .map-scrim-card h3 {
   font-family: var(--font-display);
-  font-size: 12.5px;
+  font-size: var(--text-base);
   font-weight: var(--weight-bold);
   color: var(--text-strong);
   margin: 0;
@@ -265,6 +265,39 @@ body.app-geocoding {
   justify-content: center;
 }
 .map-tool:hover { background: var(--surface-page); }
+
+.basemap-wrap { position: relative; }
+.basemap-menu {
+  position: absolute;
+  top: 0;
+  right: 38px;
+  z-index: 610;
+  min-width: 120px;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-float);
+  padding: 4px;
+  gap: 2px;
+}
+.basemap-item {
+  border: none;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  padding: 6px 9px;
+  border-radius: var(--radius-sm);
+}
+.basemap-item:hover { background: var(--surface-page); }
+.basemap-item[aria-current="true"] {
+  font-weight: 600;
+  background: var(--surface-page);
+}
 
 .legend {
   position: absolute;
@@ -377,6 +410,10 @@ body.app-geocoding {
   gap: var(--space-2);
   padding: 0 var(--space-3);
 }
+/* leaf layout: parent value | reference value | level | linked to | method | action */
+.grid-row.grid-leaf {
+  grid-template-columns: minmax(110px, .7fr) 1fr 64px 1.2fr 96px 104px;
+}
 .grid-head {
   height: 30px;
   background: var(--surface-header);
@@ -400,6 +437,7 @@ body.app-geocoding {
 .row:hover { background: var(--surface-sunken); }
 .row .lvl-tag { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-muted); }
 .row .ref { font-size: var(--text-sm); color: var(--text-strong); font-weight: var(--weight-medium); }
+.row .parent { font-size: var(--text-sm); color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row .target { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row .guess { font-family: var(--font-body); color: var(--text-muted); font-size: var(--text-xs); }
 .row .guess .mono { color: var(--text-secondary); }
@@ -409,7 +447,7 @@ body.app-geocoding {
 .row-open .lvl-tag { color: var(--orange-700); }
 .row-open .ref { font-weight: var(--weight-semibold); }
 .row-blocked { background: var(--surface-sunken); }
-.row-blocked .lvl-tag, .row-blocked .ref, .row-blocked .note { color: var(--text-disabled); }
+.row-blocked .lvl-tag, .row-blocked .ref, .row-blocked .parent, .row-blocked .note { color: var(--text-disabled); }
 .row-blocked .note { font-size: var(--text-xs); }
 
 .method {
@@ -550,7 +588,7 @@ body.app-geocoding {
 }
 .gcard-head h2 {
   font-family: var(--font-display);
-  font-size: 16px;
+  font-size: var(--text-lg);
   font-weight: var(--weight-bold);
   color: var(--text-strong);
   margin: 0;
@@ -574,7 +612,7 @@ body.app-geocoding {
   color: var(--text-muted);
   cursor: pointer;
   border-radius: var(--radius-control);
-  font-size: 16px;
+  font-size: var(--text-lg);
   line-height: 1;
   flex-shrink: 0;
 }
@@ -641,7 +679,7 @@ body.app-geocoding {
 .sheet-pane { flex: 1; min-width: 0; overflow-y: auto; padding: var(--space-4) 18px; }
 .pane-h {
   font-family: var(--font-display);
-  font-size: 14px;
+  font-size: var(--text-base);
   font-weight: var(--weight-bold);
   color: var(--text-strong);
   margin: 0;
@@ -654,6 +692,24 @@ body.app-geocoding {
   max-width: 70ch;
 }
 .pane-note-sm { font-size: var(--text-xs); color: var(--text-muted); margin-top: 10px; }
+
+/* boxed alternative-path section (gazetteer builder) inside a pane */
+.gaz-section {
+  margin-top: 20px;
+  padding: 14px 16px 16px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-card);
+  background: var(--surface-sunken);
+}
+.gaz-section-h {
+  font-family: var(--font-display);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
+  color: var(--text-strong);
+  margin: 0;
+}
+.gaz-section .pane-sub { margin-top: 4px; }
+.gaz-section .file-card { background: var(--surface-card); }
 .note {
   display: flex;
   align-items: flex-start;
@@ -684,7 +740,7 @@ body.app-geocoding {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  font-size: 14px;
+  font-size: var(--text-base);
 }
 .file-card .meta { flex: 1; min-width: 0; }
 .file-card .meta b {
@@ -743,7 +799,7 @@ body.app-geocoding {
   background: var(--brand-orange);
 }
 .here-tag {
-  font-size: 8.5px;
+  font-size: 10px;
   font-weight: var(--weight-bold);
   text-transform: uppercase;
   letter-spacing: .05em;
@@ -837,8 +893,8 @@ body.app-geocoding {
 .cand:hover { border-color: var(--border-strong); background: var(--surface-sunken); }
 .cand[aria-selected="true"] { background: #FEF9F5; border: 1.5px solid var(--brand-orange); }
 .cand .radio {
-  width: 13px;
-  height: 13px;
+  width: 15px;
+  height: 15px;
   border-radius: 50%;
   border: 1.5px solid var(--border-default);
   background: var(--surface-card);

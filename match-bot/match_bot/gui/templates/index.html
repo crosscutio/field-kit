@@ -129,6 +129,7 @@
           <input type="file" id="load_config_file" accept=".yaml,.yml" hidden>
         </label>
         <button type="button" class="btn btn-outline-primary" id="save_config_btn">Save Config YAML...</button>
+        <button type="button" class="btn btn-outline-danger ms-auto" id="new_project_btn" title="Clear this tab's uploads, results, and lookups">New project</button>
       </div>
     </div>
   </div>
@@ -447,31 +448,35 @@ document.getElementById('load_config_file').addEventListener('change', function(
     .then(r => r.json())
     .then(data => {
       if (data.error) { alert(data.error); return; }
-      // Populate form from loaded config
-      const fd = data.form_data;
-      document.getElementById('project_name').value = fd.project_name || '';
-      document.getElementById('case').value = fd.case || 'lower';
-      document.getElementById('remove_accents').checked = fd.remove_accents !== false;
-      document.getElementById('levenshtein_distance_threshold').value = fd.levenshtein_distance_threshold || 1;
-      document.getElementById('levenshtein_score_threshold').value = fd.levenshtein_score_threshold || 0.25;
-      document.getElementById('validate_numbers').checked = fd.validate_numbers !== false;
-
-      // Set column selections if columns are available
-      if (fd.ref_id_column) setSelectValue('ref_id_column', fd.ref_id_column);
-      if (fd.ref_name_column) setSelectValue('ref_name_column', fd.ref_name_column);
-      if (fd.target_id_column) setSelectValue('target_id_column', fd.target_id_column);
-      if (fd.target_name_column) setSelectValue('target_name_column', fd.target_name_column);
-
-      // Rebuild hierarchy rows
-      document.getElementById('ref_hierarchy_container').innerHTML = '';
-      (fd.ref_hierarchy || []).forEach(h => addHierarchyRow('ref', h.column, h.label));
-      document.getElementById('target_hierarchy_container').innerHTML = '';
-      (fd.target_hierarchy || []).forEach(h => addHierarchyRow('target', h.column, h.label));
-
+      applyFormData(data.form_data);
       document.getElementById('output-log').textContent = 'Config loaded from ' + file.name;
+      scheduleSnapshot();
     })
     .catch(err => alert('Failed to load config: ' + err));
 });
+
+// Populate the form from a config/snapshot form-data object. Shared by the
+// Load Config handler and the page-load session restore.
+function applyFormData(fd) {
+  document.getElementById('project_name').value = fd.project_name || '';
+  document.getElementById('case').value = fd.case || 'lower';
+  document.getElementById('remove_accents').checked = fd.remove_accents !== false;
+  document.getElementById('levenshtein_distance_threshold').value = fd.levenshtein_distance_threshold || 1;
+  document.getElementById('levenshtein_score_threshold').value = fd.levenshtein_score_threshold || 0.25;
+  document.getElementById('validate_numbers').checked = fd.validate_numbers !== false;
+
+  // Set column selections if columns are available
+  if (fd.ref_id_column) setSelectValue('ref_id_column', fd.ref_id_column);
+  if (fd.ref_name_column) setSelectValue('ref_name_column', fd.ref_name_column);
+  if (fd.target_id_column) setSelectValue('target_id_column', fd.target_id_column);
+  if (fd.target_name_column) setSelectValue('target_name_column', fd.target_name_column);
+
+  // Rebuild hierarchy rows
+  document.getElementById('ref_hierarchy_container').innerHTML = '';
+  (fd.ref_hierarchy || []).forEach(h => addHierarchyRow('ref', h.column, h.label));
+  document.getElementById('target_hierarchy_container').innerHTML = '';
+  (fd.target_hierarchy || []).forEach(h => addHierarchyRow('target', h.column, h.label));
+}
 
 function setSelectValue(id, value) {
   const sel = document.getElementById(id);
@@ -632,7 +637,7 @@ function showMap(geojsonUrl) {
     }).addTo(map);
   }
   setTimeout(() => map.invalidateSize(), 0);
-  fetch(geojsonUrl)
+  return fetch(geojsonUrl)
     .then(r => r.json())
     .then(data => {
       if (geojsonLayer) { map.removeLayer(geojsonLayer); }
@@ -909,5 +914,72 @@ function chatSendMessage() {
 
 chatSend.addEventListener('click', chatSendMessage);
 chatInput.addEventListener('keydown', e => { if (e.key === 'Enter') chatSendMessage(); });
+
+// --- Session persistence (survive reloads/tab switches while the app runs) ---
+let booted = false, snapTimer = null;
+
+function scheduleSnapshot() {
+  if (!booted) return;
+  clearTimeout(snapTimer);
+  snapTimer = setTimeout(() => {
+    fetch('/api/state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        form: collectFormData(),
+        ui: {
+          suggest_level: document.getElementById('suggest_level').value,
+          suggest_threshold: document.getElementById('suggest_threshold').value,
+          unmatched_level: document.getElementById('unmatched-level').value,
+        },
+      }),
+    }).catch(() => {});
+  }, 800);
+}
+document.addEventListener('change', scheduleSnapshot);
+document.addEventListener('input', scheduleSnapshot);
+
+function restoreSession() {
+  fetch('/api/state')
+    .then(r => r.json())
+    .then(st => {
+      if (!st.exists) return;
+      if (st.files.ref) {
+        columns.ref = st.files.ref.columns || [];
+        document.getElementById('ref_file_name').textContent = st.files.ref.name;
+        populateDropdowns('ref', columns.ref);
+      }
+      if (st.files.target) {
+        columns.target = st.files.target.columns || [];
+        document.getElementById('target_file_name').textContent = st.files.target.name;
+        populateDropdowns('target', columns.target);
+      }
+      if (st.form) applyFormData(st.form);
+      updateSuggestLevels();
+      if (st.ui) {
+        if (st.ui.suggest_level) setSelectValue('suggest_level', st.ui.suggest_level);
+        if (st.ui.suggest_threshold) document.getElementById('suggest_threshold').value = st.ui.suggest_threshold;
+      }
+      const isGeojson = st.files.target && st.files.target.ext === '.geojson';
+      const mapReady = isGeojson ? showMap('/api/geojson') : Promise.resolve();
+      if (st.outputs.matched) {
+        updateUnmatchedLevels();
+        if (st.ui && st.ui.unmatched_level) setSelectValue('unmatched-level', st.ui.unmatched_level);
+        fetchUnmatched();
+        if (isGeojson) mapReady.then(() => refreshMap()).catch(() => {});
+      }
+      document.getElementById('output-log').textContent = 'Session restored.';
+    })
+    .catch(() => {})
+    .finally(() => { booted = true; });
+}
+restoreSession();
+
+document.getElementById('new_project_btn').addEventListener('click', () => {
+  if (!confirm('Start a new project? This clears uploads, match results, and lookups for the Matching tab.')) return;
+  clearTimeout(snapTimer);
+  booted = false;  // suppress in-flight snapshots during teardown
+  fetch('/api/reset', { method: 'POST' }).then(() => location.reload());
+});
 </script>
 {% endblock %}
