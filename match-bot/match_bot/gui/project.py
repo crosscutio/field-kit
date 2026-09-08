@@ -360,8 +360,10 @@ class Project:
                 'auto': status == 'linked' and (mt != 'manual' or links.is_auto(r['mapping_rationale'])),
                 'pool': pool[tuple(std(r.get(f'target_{l}', '')) for l in labels)],
             })
+        # Pending communities with something to choose from come first.
         order = {'pending': 0, 'linked': 1, 'pin': 1, 'no_equivalent': 2}
-        out.sort(key=lambda x: (order[x['status']], x['path'], x['name'].lower()))
+        out.sort(key=lambda x: (order[x['status']], x['status'] == 'pending' and x['pool'] == 0,
+                                x['path'], x['name'].lower()))
         return out
 
     # ---- pins ------------------------------------------------------------

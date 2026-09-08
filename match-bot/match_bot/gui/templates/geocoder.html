@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Match Bot · Community Geocoder{% endblock %}
+{% block head %}
+  <link rel="stylesheet" href="{{ url_for('static', filename='geocoder.css') }}">
+{% endblock %}
+{% block body %}
+  <div class="app">
+    <aside id="side" class="side"></aside>
+    <div class="main">
+      <div id="mapwrap" class="mapwrap" hidden>
+        <div id="map" class="map"></div>
+        <div id="maphint" class="maphint"></div>
+      </div>
+      <div id="pane" class="pane"></div>
+      <div id="drawer" class="drawer" hidden></div>
+      <div id="toast" class="toast" hidden></div>
+      <div id="busy" class="busy" hidden><span class="mono">working…</span></div>
+    </div>
+  </div>
+  <input type="file" id="file-target" accept=".csv" hidden>
+  <input type="file" id="file-ref" accept=".csv" hidden>
+  <input type="file" id="file-boundaries" accept=".geojson,.json" hidden>
+{% endblock %}
+{% block scripts %}
+  <script src="{{ url_for('static', filename='geocoder.js') }}"></script>
+{% endblock %}
