@@ -339,8 +339,9 @@ def generate_leaf_lookup(
 def preserve_manual_matches(new_lookup: pd.DataFrame, existing_lookup: pd.DataFrame) -> pd.DataFrame:
     """Merge manual matches from an existing lookup into a newly generated one.
 
-    Manual entries (match_type='manual' or non-empty mapping_rationale) in the
-    existing lookup override the corresponding rows in new_lookup.
+    Manual entries (match_type='manual' / 'no_equivalent' or a non-empty
+    mapping_rationale) in the existing lookup override the corresponding
+    rows in new_lookup.
 
     Args:
         new_lookup: Freshly generated lookup table.
@@ -356,7 +357,7 @@ def preserve_manual_matches(new_lookup: pd.DataFrame, existing_lookup: pd.DataFr
 
     # Identify manual entries in existing lookup
     manual_mask = (
-        (existing_lookup.get('match_type', pd.Series()) == 'manual') |
+        (existing_lookup.get('match_type', pd.Series()).isin(['manual', 'no_equivalent'])) |
         (existing_lookup.get('mapping_rationale', pd.Series(dtype='str')).fillna('').str.strip() != '')
     )
     manual_entries = existing_lookup[manual_mask]
@@ -404,8 +405,16 @@ def preserve_manual_matches(new_lookup: pd.DataFrame, existing_lookup: pd.DataFr
                 if isinstance(v, str) and not v.strip():
                     continue
                 result.at[matched_idx, col] = v
-            result.at[matched_idx, 'match_type'] = 'manual'
-            result.at[matched_idx, 'unmatched'] = ''
+            if str(manual_row.get('match_type', '')) == 'no_equivalent':
+                # A person decided there is no counterpart; keep it out of
+                # the candidate pools but still counted as unmatched.
+                result.at[matched_idx, 'match_type'] = 'no_equivalent'
+                if 'unmatched' in result.columns:
+                    result.at[matched_idx, 'unmatched'] = 'x'
+            else:
+                result.at[matched_idx, 'match_type'] = 'manual'
+                if 'unmatched' in result.columns:
+                    result.at[matched_idx, 'unmatched'] = ''
         else:
             # Manual entry for a record not in new lookup — append it
             result = pd.concat([result, manual_row.to_frame().T], ignore_index=True)

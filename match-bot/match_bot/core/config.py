@@ -34,6 +34,14 @@ class DatasetConfig:
         return self.columns.get('name', '')
 
     @property
+    def latitude_column(self) -> str:
+        return self.columns.get('latitude', '')
+
+    @property
+    def longitude_column(self) -> str:
+        return self.columns.get('longitude', '')
+
+    @property
     def hierarchy(self) -> List[HierarchyLevel]:
         raw = self.columns.get('hierarchy', [])
         return [HierarchyLevel(column=h['column'], label=h['label']) for h in raw]
