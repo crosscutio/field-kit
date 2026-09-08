@@ -159,7 +159,7 @@ def _hier_pools(config, level, pipeline=None):
 # Public API
 # ---------------------------------------------------------------------------
 
-def suggest(config, level='leaf', threshold=70, scope_depth=None) -> List[Dict]:
+def suggest(config, level='leaf', threshold=70, scope_depth=None, pipeline=None) -> List[Dict]:
     """Ranked 1-to-1 suggestions for a level, highest score first.
 
     Each dict: target_key, target_name, ref_key, ref_name, score, parents,
@@ -183,7 +183,7 @@ def suggest(config, level='leaf', threshold=70, scope_depth=None) -> List[Dict]:
     if level not in labels:
         raise ValueError(f'Unknown level {level!r}; expected leaf or one of {labels}')
     i = labels.index(level)
-    tby, rby, _ = _hier_pools(config, level)
+    tby, rby, _ = _hier_pools(config, level, pipeline)
     h, t_raw = f'h{i}', f'target_{level}_raw'
     out = []
     for pk, ts in tby.items():
@@ -262,7 +262,7 @@ def candidates(config, level, target_key, restrict=True, top=3, pipeline=None) -
     return scored[:top] if top else scored
 
 
-def best_scores(config, level='leaf', restrict=True) -> Dict[str, float]:
+def best_scores(config, level='leaf', restrict=True, pipeline=None) -> Dict[str, float]:
     """target_key -> best candidate score (0 when the pool is empty). Used
     for the histogram / threshold preview."""
     labels = config.hierarchy_labels
@@ -279,7 +279,7 @@ def best_scores(config, level='leaf', restrict=True) -> Dict[str, float]:
         return out
     i = labels.index(level)
     h = f'h{i}'
-    tby, rby, _ = _hier_pools(config, level)
+    tby, rby, _ = _hier_pools(config, level, pipeline)
     all_refs = [r for lst in rby.values() for r in lst]
     for pk, ts in tby.items():
         pool = rby.get(pk, []) if restrict else all_refs

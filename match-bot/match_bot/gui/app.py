@@ -24,7 +24,12 @@ ADM_LEVELS = ['ADM1', 'ADM2', 'ADM3', 'ADM4']
 
 def create_app():
     app = Flask(__name__)
-    app.secret_key = os.urandom(24)
+    # A stable secret key lets a browser session survive a server restart.
+    key_path = Path(app.instance_path) / 'secret_key'
+    key_path.parent.mkdir(parents=True, exist_ok=True)
+    if not key_path.exists():
+        key_path.write_bytes(os.urandom(32))
+    app.secret_key = key_path.read_bytes()
     port = os.environ.get('MATCH_BOT_PORT', '5000')
     app.config['SESSION_COOKIE_NAME'] = f'match_bot_session_{port}'
     upload_base = Path(app.instance_path) / 'uploads'
@@ -62,6 +67,8 @@ def create_app():
                        'ref_id_column', 'ref_lat_column', 'ref_lon_column', 'ref_hierarchy',
                        'boundaries_source', 'country', 'threshold', 'restrict', 'ui', 'ref_source'}
             upd = {k: v for k, v in data.items() if k in allowed}
+            if 'country' in upd or 'boundaries_source' in upd:
+                upd['boundary_levels'] = {}
             if upd:
                 p.update_form(**upd)
         return jsonify({'ok': True, **p.state()})
@@ -114,29 +121,60 @@ def create_app():
         label = d.get('label', '')
         if label in files:
             files[label]['name_property'] = d.get('name_property', '')
-            p.update_form(boundary_files=files)
+            p.update_form(boundary_files=files, boundary_levels={})
         return jsonify({'ok': True, **p.state()})
 
     @app.route('/api/boundaries/<label>')
     def api_boundaries(label):
+        """Admin polygons for one hierarchy level, each feature annotated with
+        ``_ref`` = the reference admin value it corresponds to.
+
+        Automatic mode picks the geoBoundaries ADM level whose names overlap
+        the reference file's values best (a country's "regions" are not
+        always ADM1), and remembers the choice in the form state.
+        """
         p = project()
         f = p.form()
+        levels = p.levels()[:-1]
+        if label not in levels:
+            return fail('Unknown level', 404)
         path = p.boundary_path(label)
         name_prop = 'shapeName'
+        chosen = None
         if path.exists():
             name_prop = (f.get('boundary_files', {}).get(label) or {}).get('name_property') or name_prop
         elif f.get('country') and f.get('boundaries_source') != 'none':
-            levels = p.levels()[:-1]
-            if label not in levels:
-                return fail('Unknown level', 404)
-            try:
-                path = gz.ensure_boundaries(f['country'].upper(), ADM_LEVELS[levels.index(label)])
-            except (gz.GazetteerError, urllib.error.URLError, TimeoutError, OSError) as e:
-                return gaz_error(e)
+            iso3 = f['country'].upper()
+            remembered = (f.get('boundary_levels') or {}).get(label)
+            candidates = [remembered] if remembered else ADM_LEVELS[:3]
+            best = None
+            for adm in candidates:
+                try:
+                    bp = gz.ensure_boundaries(iso3, adm)
+                except (gz.GazetteerError, urllib.error.URLError, TimeoutError, OSError) as e:
+                    if remembered or adm == 'ADM1':
+                        return gaz_error(e)
+                    continue
+                gj = json.loads(Path(bp).read_text(encoding='utf-8'))
+                st = p.annotate_boundaries(gj, name_prop, label)
+                frac = st['matched'] / st['reference_values'] if st['reference_values'] else 0
+                if best is None or frac > best[0]:
+                    best = (frac, adm, gj, st)
+                if frac >= 0.8:
+                    break
+            if best is None:
+                return fail('No boundaries available', 404)
+            frac, chosen, gj, st = best
+            bl = f.get('boundary_levels') or {}
+            if bl.get(label) != chosen:
+                bl[label] = chosen
+                p.update_form(boundary_levels=bl)
+            return jsonify({'ok': True, 'name_property': name_prop, 'geojson': gj, 'adm': chosen, **st})
         else:
             return fail('No boundaries available', 404)
         gj = json.loads(Path(path).read_text(encoding='utf-8'))
-        return jsonify({'ok': True, 'name_property': name_prop, 'geojson': gj})
+        st = p.annotate_boundaries(gj, name_prop, label)
+        return jsonify({'ok': True, 'name_property': name_prop, 'geojson': gj, 'adm': 'upload', **st})
 
     # ---- pipeline --------------------------------------------------------
     @app.route('/api/lookups', methods=['POST'])

@@ -218,10 +218,19 @@ input[type=range] { width: 100%; accent-color: var(--ink); }
 .bar-legend { display: flex; justify-content: space-between; max-width: 900px; margin-top: 8px; font-family: var(--mono); font-size: 11px; color: var(--grey-1); }
 .two-col { display: grid; grid-template-columns: 1fr 380px; gap: 40px; margin-top: 44px; max-width: 1200px; }
 .hist { margin-top: 20px; }
-.hist .bars { display: flex; align-items: flex-end; gap: 6px; height: 180px; border-bottom: 1px solid var(--ink); }
+.hist .bars { display: flex; align-items: flex-end; gap: 6px; height: 180px; border-bottom: 1px solid var(--ink); position: relative; }
+.hist .thr-line { position: absolute; top: -8px; bottom: -1px; width: 0; border-left: 2px solid var(--ink); pointer-events: none; }
+.hist .thr-line span { position: absolute; top: -18px; left: 6px; font-family: var(--mono); font-size: 11px; white-space: nowrap; background: var(--ink); color: #fff; padding: 2px 6px; }
+.hist .ticks { position: relative; height: 26px; }
+.hist .tick { position: absolute; top: 0; width: 0; }
+.hist .tick i { display: block; width: 1px; height: 5px; background: var(--grey-3); }
+.hist .tick.major i { height: 9px; background: var(--ink); }
+.hist .tick span { position: absolute; top: 11px; left: 0; transform: translateX(-50%); font-family: var(--mono); font-size: 10px; color: var(--grey-2); }
+.hist .tick:first-child span { transform: none; }
+.hist .tick:last-child span { transform: translateX(-100%); }
 .hist .bars > div { flex: 1; background: var(--ink); min-height: 2px; }
 .hist .bars > div.below { background: repeating-linear-gradient(45deg, var(--ink) 0 2px, #fff 2px 5px); border: 1px solid var(--grey-5); }
-.hist .axis { display: flex; justify-content: space-between; margin-top: 10px; font-family: var(--mono); font-size: 11px; color: var(--grey-2); }
+
 .adjust { border: 1px solid var(--line); padding: 18px; margin-top: 20px; display: flex; flex-direction: column; gap: 18px; }
 .adjust .row { display: flex; justify-content: space-between; font-size: 13px; }
 .pre { font-family: var(--mono); font-size: 11px; white-space: pre-wrap; color: var(--grey-1); line-height: 1.7; max-height: 200px; overflow: auto; border: 1px solid var(--line-faint); padding: 10px 12px; margin-top: 16px; }
@@ -255,4 +264,11 @@ input[type=range] { width: 100%; accent-color: var(--ink); }
 
 /* ---------- toast / busy ---------- */
 .toast { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); background: var(--ink); color: #fff; font-family: var(--mono); font-size: 11px; padding: 8px 14px; z-index: 1300; max-width: 70%; }
-.busy { position: absolute; inset: 0; background: rgba(255,255,255,0.55); display: flex; align-items: center; justify-content: center; z-index: 1250; font-size: 12px; color: var(--grey-1); }
+.busy { position: absolute; inset: 0; background: rgba(255,255,255,0.45); display: flex; align-items: center; justify-content: center; z-index: 1250; }
+.busy-box { background: #fff; border: 1px solid var(--ink); padding: 18px 22px; display: flex; align-items: center; gap: 16px; min-width: 360px; max-width: 560px; box-shadow: 0 0 0 4px #fff; }
+.busy-text { font-size: 14px; font-weight: 600; }
+.busy-sub { font-size: 10px; color: var(--grey-2); margin-top: 5px; letter-spacing: 0.06em; text-transform: uppercase; }
+.busy-dot { width: 14px; height: 14px; border: 2px solid var(--ink); border-right-color: transparent; border-radius: 50%; flex: none; animation: spin 0.9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.scope-chip { font-family: var(--mono); font-size: 10px; letter-spacing: 0.04em; border: 1px solid var(--ink); background: var(--ink); color: #fff; padding: 4px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 360px; }
+.scope-chip.off { background: #fff; color: var(--grey-1); border-color: var(--line-strong); }

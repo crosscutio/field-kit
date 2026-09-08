@@ -33,15 +33,21 @@
     clearTimeout(toast._t);
     toast._t = setTimeout(() => { t.hidden = true; }, ms || 3200);
   }
-  function busy(on) {
+  const BUSY_MSGS = [];
+  function busy(on, msg) {
     S.busy += on ? 1 : -1;
-    $('#busy').hidden = S.busy <= 0;
+    if (on) BUSY_MSGS.push(msg || ''); else BUSY_MSGS.shift();
+    const box = $('#busy');
+    box.hidden = S.busy <= 0;
+    const text = BUSY_MSGS.filter(Boolean).slice(-1)[0] || 'working…';
+    box.innerHTML = `<div class="busy-box"><div class="busy-dot"></div><div><div class="busy-text">${esc(text)}</div><div class="busy-sub mono">running in the matching engine · please wait</div></div></div>`;
   }
   async function api(path, opts) {
     const o = Object.assign({ headers: {} }, opts || {});
+    const msg = o.msg; delete o.msg;
     if (o.json !== undefined) { o.method = o.method || 'POST'; o.headers['Content-Type'] = 'application/json'; o.body = JSON.stringify(o.json); delete o.json; }
     if (o.form) { o.method = 'POST'; o.body = o.form; delete o.form; }
-    busy(true);
+    busy(true, msg);
     try {
       const r = await fetch(path, o);
       const d = await r.json().catch(() => ({ ok: false, error: 'bad response' }));
@@ -334,8 +340,9 @@
       body = `<div class="h0">${matched} of ${total()} matched automatically</div><div class="note" style="font-size:12px;margin-top:10px">${left} fell below the threshold and need a person</div>
         <div class="bar-split"><div class="fill" style="width:${pct()}"></div><div class="rest"></div></div><div class="bar-legend"><span>${matched} accepted</span><span>${left} unmatched</span></div>
         <div class="two-col"><div><div class="label-caps">Score distribution · best candidate for each unmatched community</div>
-          <div class="hist"><div class="bars">${bins.map(b => `<div class="${b.hi > thr ? '' : 'below'}" style="height:${Math.max(2, b.n / maxBin * 100)}%" title="${fmt(b.lo)}–${fmt(b.hi)} · ${b.n}"></div>`).join('')}</div>
-          <div class="axis"><span>0.50</span><span style="color:#111110">threshold ${fmt(thr)}</span><span>1.00</span></div></div>
+          <div class="hist"><div class="bars">${bins.map(b => `<div class="${b.lo >= thr ? '' : 'below'}" style="height:${Math.max(2, b.n / maxBin * 100)}%" title="${fmt(b.lo)}–${fmt(b.hi)} · ${b.n}"></div>`).join('')}
+            <div class="thr-line" style="left:${(thr - 50) / 50 * 100}%"><span>threshold ${fmt(thr)}</span></div></div>
+          <div class="ticks">${[50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100].map(v => `<div class="tick ${v % 10 === 0 ? 'major' : ''}" style="left:${(v - 50) / 50 * 100}%"><i></i>${v % 10 === 0 ? `<span>${fmt(v)}</span>` : ''}</div>`).join('')}</div></div>
           ${S.runLog ? `<div class="label-caps" style="margin-top:28px">Engine log</div><div class="pre">${esc(S.runLog)}</div>` : ''}</div>
         <div><div class="label-caps">Adjust and re-run</div><div class="adjust"><div><div class="row"><span>Auto-accept above</span><span class="mono" id="thr-label">${fmt(thr)}</span></div><input type="range" min="50" max="100" step="1" value="${thr}" data-field="threshold" style="margin-top:10px"><div class="note" style="margin-top:8px">${would} of the remaining ${scores.length} have a candidate at ${fmt(thr)} or better</div></div>
           <label class="check" style="font-size:13px"><input type="checkbox" data-field="restrict" ${f.restrict === false ? '' : 'checked'}> Restrict to parent admin unit</label>
@@ -362,6 +369,7 @@
     const noCandsNote = restrict ? 'no candidate inside the linked admin unit — click the map to place a point, or turn off the admin restriction in stage 3' : 'no candidate above 0.35 — click the map to place a point';
     const saveOn = !!c.pin || (cands.length > 0 && comm && comm.status === 'pending');
     return `<div class="strip"><span class="title">${esc(comm ? comm.name : '—')}</span><span class="meta">${esc(comm ? comm.path : '')}</span>
+        ${restrict && comm ? `<span class="scope-chip" id="scope-chip">places inside ${esc(comm.path || 'the parent admin unit')}</span>` : '<span class="scope-chip off">all places · restriction off</span>'}
         <input class="input" placeholder="Search communities or places" value="${esc(c.query)}" data-input="commQuery">
         <div class="right"><span class="mono muted" style="font-size:11px">${left} left</span><button class="btn sm" data-act="undo" ${S.st.can_undo ? '' : 'disabled'}>Undo</button><button class="btn sm" data-act="log">History</button></div></div>
       <div class="dock"><div class="panel-hd"><span class="caps">${c.all ? 'All' : 'Unlinked'} · ${c.all ? c.rows.length : left}</span><span class="mono" style="cursor:pointer" data-act="toggle-all">${c.all ? 'hide linked' : 'show all ↗'}</span></div>
@@ -373,7 +381,7 @@
         }).join('') || '<div class="cand-empty">everything is linked</div>'}</div>
         <div class="panel-ft"><div class="foot-stats"><span>${geocoded()} linked</span><span>${manual} by hand</span></div><button class="btn ${left ? 'outline' : 'primary'}" data-act="stage" data-n="5">Review &amp; export →</button></div></div>
       <div class="inspector"><div class="insp-hd"><div class="h2">${esc(comm ? comm.name : '—')}</div><div class="meta">${esc(comm ? comm.path : '')}</div></div>
-        <div class="label-caps" style="padding:12px 14px 6px">${cands.length ? 'Candidates · press 1–' + cands.length : 'Candidates'}</div>
+        <div class="label-caps" style="padding:12px 14px 6px">${cands.length ? 'Candidates · press 1–' + cands.length : 'Candidates'}${restrict ? ' · within parent admin' : ''}</div>
         <div class="panel-list">${comm && comm.status !== 'pending' ? `<div class="cand-empty">${comm.status === 'linked' ? `linked to ${esc(comm.ref_name)} · ${comm.auto ? 'auto' : 'manual'}` : comm.status === 'pin' ? 'has a dropped pin' : 'marked no equivalent'}</div>` : ''}
           ${cands.map((cd, i) => `<div class="cand ${i === c.candSel && !c.pin ? 'on' : ''}" data-act="cand" data-i="${i}"><div class="key">${i + 1}</div><div class="body"><div class="name">${esc(cd.ref_name_raw || cd.ref_name)}</div><div class="meta">${esc(Object.values(cd.ref_parents || {}).filter(Boolean).join(' › '))}</div></div><span class="score">${fmt(cd.score)}</span></div>`).join('')}
           ${c.pin ? `<div class="cand on"><div class="key pin">✚</div><div class="body"><div class="name">Point on the map</div><div class="meta">${c.pin.lat.toFixed(4)}, ${c.pin.lon.toFixed(4)}</div></div><span class="mono muted" style="font-size:11px;cursor:pointer" data-act="clear-pin">clear</span></div>` : ''}
@@ -430,7 +438,7 @@
   const BOUNDS_CACHE = {};
   async function loadBoundaries(label) {
     if (BOUNDS_CACHE[label] !== undefined) return BOUNDS_CACHE[label];
-    busy(true);
+    busy(true, `Loading admin boundaries for the ${label} level`);
     try {
       const r = await fetch('/api/boundaries/' + encodeURIComponent(label));
       const d = await r.json().catch(() => null);
@@ -444,7 +452,6 @@
   async function drawAdminMap() {
     if (!MAP || S.stage !== 2) return;
     clearLayers();
-    $('#maphint').textContent = '[ admin boundaries ]';
     const cands = S.adminCands;
     const picked = S.adminCandSel || (cands[0] ? cands[0].ref_key : null);
     const top = cands[0] ? cands[0].score : 1;
@@ -452,68 +459,81 @@
     cands.forEach(c => { scoreOf[normName(c.ref_name)] = c.score; });
     const b = await loadBoundaries(S.level);
     if (S.stage !== 2) return;
+    if (!b || !b.geojson) { $('#maphint').textContent = '[ no admin boundaries available — choose a country or upload GeoJSON in Set up ]'; return; }
+    const src = b.adm === 'upload' ? 'your GeoJSON' : 'geoBoundaries ' + b.adm;
+    $('#maphint').textContent = `[ ${src} · ${b.matched} of ${b.reference_values} ${S.level} names have a boundary ]`;
     const bounds = [];
-    if (b && b.geojson) {
-      const prop = b.name_property || 'shapeName';
-      const layer = L.geoJSON(b.geojson, {
-        style: f => {
-          const name = normName((f.properties || {})[prop]);
-          const sc = scoreOf[name];
-          const on = picked && name === normName(picked);
-          const rel = sc == null ? 0 : (top ? sc / top : 0);
-          return { color: '#111110', weight: on ? 2 : 1, dashArray: (on || rel > 0.55) ? null : '4 3', opacity: on ? 1 : 0.25 + 0.6 * rel, fillColor: '#111110', fillOpacity: on ? 0.14 : 0.02 + 0.09 * rel };
-        },
-        onEachFeature: (f, lyr) => {
-          const raw = (f.properties || {})[prop];
-          const name = normName(raw);
-          const sc = scoreOf[name];
-          if (sc != null) {
-            lyr.bindTooltip(`${raw} · ${fmt(sc)}`, { permanent: true, direction: 'center', className: 'poly-label' + (picked && name === normName(picked) ? ' on' : '') });
-            const c = cands.find(x => normName(x.ref_name) === name);
-            lyr.on('click', () => { S.adminCandSel = c.ref_key; render(); });
-            bounds.push(lyr.getBounds());
-          } else lyr.bindTooltip(String(raw || ''), { direction: 'center', className: 'poly-label' });
-        },
-      }).addTo(LAYERS.admin);
-      if (!bounds.length && cands.length === 0) { try { MAP.fitBounds(layer.getBounds(), PAD); } catch (e) { /* empty */ } }
-    }
-    const matched = new Set();
-    if (b && b.geojson) { const prop = b.name_property || 'shapeName'; (b.geojson.features || []).forEach(f => { const n = normName((f.properties || {})[prop]); if (scoreOf[n] != null) matched.add(n); }); }
-    const missing = cands.filter(c => !matched.has(normName(c.ref_name))).slice(0, 12);
-    if (missing.length) {
-      // Candidates without a polygon: draw the extent of their places instead.
-      $('#maphint').textContent = matched.size ? '[ admin boundaries · extents where no boundary matched ]' : '[ place extents · no matching boundaries ]';
-      const qs = missing.map(c => 'value=' + encodeURIComponent(c.ref_name)).join('&');
-      const d = await api(`/api/places?level=${encodeURIComponent(S.level)}&${qs}`);
-      if (!d || S.stage !== 2) return;
-      const byAdmin = {};
-      d.points.forEach(p => { const k = normName(p.admin.split(' › ')[hierLevels().indexOf(S.level)] || ''); (byAdmin[k] = byAdmin[k] || []).push(p); });
-      missing.forEach(c => {
-        const pts = byAdmin[normName(c.ref_name)] || [];
-        if (!pts.length) return;
-        const bb = L.latLngBounds(pts.map(p => [p.lat, p.lon]));
-        const on = c.ref_key === picked;
-        const rel = top ? c.score / top : 0;
-        L.rectangle(bb, { color: '#111110', weight: on ? 2 : 1, dashArray: (on || rel > 0.55) ? null : '4 3', opacity: on ? 1 : 0.3 + 0.55 * rel, fillColor: '#111110', fillOpacity: on ? 0.14 : 0.03 + 0.09 * rel })
-          .bindTooltip(`${c.ref_name} · ${fmt(c.score)}`, { permanent: true, direction: 'center', className: 'poly-label' + (on ? ' on' : '') })
-          .on('click', () => { S.adminCandSel = c.ref_key; render(); }).addTo(LAYERS.admin);
-        pts.forEach(p => L.circleMarker([p.lat, p.lon], { radius: 2, color: '#111110', weight: 0, fillOpacity: on ? 0.8 : 0.3 }).addTo(LAYERS.places));
-        bounds.push(bb);
-      });
-    }
+    const layer = L.geoJSON(b.geojson, {
+      style: f => {
+        const ref = normName((f.properties || {})._ref);
+        const sc = ref ? scoreOf[ref] : null;
+        const on = picked && ref && ref === normName(picked);
+        const rel = sc == null ? 0 : (top ? sc / top : 0);
+        return { color: '#111110', weight: on ? 2 : (sc == null ? 0.8 : 1), dashArray: (on || sc == null || rel > 0.55) ? null : '4 3',
+                 opacity: on ? 1 : (sc == null ? 0.35 : 0.35 + 0.6 * rel), fillColor: '#111110', fillOpacity: on ? 0.16 : (sc == null ? 0 : 0.03 + 0.1 * rel) };
+      },
+      onEachFeature: (f, lyr) => {
+        const props = f.properties || {};
+        const ref = normName(props._ref);
+        const sc = ref ? scoreOf[ref] : null;
+        const raw = props._name || props._ref || '';
+        if (sc != null) {
+          const on = picked && ref === normName(picked);
+          lyr.bindTooltip(`${raw} · ${fmt(sc)}`, { permanent: true, direction: 'center', className: 'poly-label' + (on ? ' on' : '') });
+          const c = cands.find(x => normName(x.ref_name) === ref);
+          lyr.on('click', () => { S.adminCandSel = c.ref_key; render(); });
+          bounds.push(lyr.getBounds());
+        } else {
+          lyr.bindTooltip(String(raw), { direction: 'center', className: 'poly-label' });
+        }
+      },
+    }).addTo(LAYERS.admin);
     if (bounds.length) {
-      const all = bounds.reduce((a, b) => a.extend(b), L.latLngBounds(bounds[0]));
+      const all = bounds.reduce((a, bb) => a.extend(bb), L.latLngBounds(bounds[0]));
       MAP.fitBounds(all, PAD);
+    } else {
+      try { MAP.fitBounds(layer.getBounds(), PAD); } catch (e) { /* empty layer */ }
     }
   }
 
-  function drawLinkMap() {
+  async function drawScopeOutline(comm) {
+    // Outline the community's parent admin units (in reference space) so it is
+    // clear which area the candidate places were drawn from.
+    const lv = hierLevels();
+    const drawn = [];
+    for (let i = 0; i < lv.length; i++) {
+      const val = normName((comm.parents || {})[lv[i]]);
+      if (!val) continue;
+      const b = await loadBoundaries(lv[i]);
+      if (!b || !b.geojson || S.stage !== 4) continue;
+      const feats = (b.geojson.features || []).filter(f => normName((f.properties || {})._ref) === val);
+      if (!feats.length) continue;
+      const deepest = i === lv.length - 1;
+      const lyr = L.geoJSON({ type: 'FeatureCollection', features: feats }, {
+        style: { color: '#111110', weight: deepest ? 2 : 1, dashArray: deepest ? null : '6 4', opacity: deepest ? 0.9 : 0.5, fillColor: '#111110', fillOpacity: deepest ? 0.04 : 0 },
+        interactive: false,
+      }).addTo(LAYERS.admin);
+      drawn.push({ level: lv[i], name: (feats[0].properties || {})._name || val, bounds: lyr.getBounds(), deepest });
+    }
+    return drawn;
+  }
+
+  async function drawLinkMap() {
     if (!MAP || S.stage !== 4) return;
     clearLayers();
     const c = S.comm;
     const comm = currentComm();
     const cands = c.cands;
     $('#maphint').textContent = c.pin ? `[ point at ${c.pin.lat.toFixed(4)}, ${c.pin.lon.toFixed(4)} ]` : (comm && comm.status === 'pending' ? '[ click a dot to pick it · click anywhere to place a point ]' : '[ pick an unlinked community ]');
+    const keep = drawLinkMap._keep;
+    drawLinkMap._keep = false;
+    let scope = [];
+    if (comm && form().restrict !== false) {
+      scope = await drawScopeOutline(comm);
+      if (S.stage !== 4) return;
+      const chip = $('#scope-chip');
+      if (chip) chip.textContent = scope.length ? 'places inside ' + scope.map(x => x.name).join(' › ') : 'places inside ' + (comm.path || 'the parent admin unit') + ' (no boundary drawn)';
+    }
     const candIds = new Set(cands.map(x => x.ref_id));
     const pts = [];
     c.places.forEach(p => {
@@ -537,10 +557,12 @@
       const icon = L.divIcon({ className: '', html: '<div class="pin-marker" style="width:22px;height:22px"></div>', iconSize: [22, 22], iconAnchor: [11, 11] });
       L.marker([c.pin.lat, c.pin.lon], { icon, interactive: false }).addTo(LAYERS.pin);
     }
-    if (pts.length && !drawLinkMap._keep) {
-      try { MAP.fitBounds(L.latLngBounds(pts), Object.assign({ maxZoom: 12 }, PAD)); } catch (e) { /* ignore */ }
+    if (!keep) {
+      const deepest = scope.find(x => x.deepest) || scope[scope.length - 1];
+      let bb = pts.length ? L.latLngBounds(pts) : null;
+      if (deepest) bb = bb ? bb.extend(deepest.bounds) : deepest.bounds;
+      if (bb) { try { MAP.fitBounds(bb, Object.assign({ maxZoom: 12 }, PAD)); } catch (e) { /* ignore */ } }
     }
-    drawLinkMap._keep = false;
   }
   function pickFromMap(p) {
     const c = S.comm;
@@ -560,7 +582,7 @@
     S.stage = n;
     S.logOpen = false;
     if (n === 2) {
-      if (!S.st.has_lookups) { const d = await api('/api/lookups', { json: {} }); if (!d) { S.stage = 1; render(); return; } }
+      if (!S.st.has_lookups) { const d = await api('/api/lookups', { json: {}, msg: 'Running exact and near-exact matching at every level' }); if (!d) { S.stage = 1; render(); return; } }
       if (!S.level || !hierLevels().includes(S.level)) S.level = hierLevels()[0];
       if (!hierLevels().length) { toast('no admin levels mapped — skipping to matching'); S.stage = 3; render(); return; }
       await loadLevel();
@@ -569,12 +591,12 @@
     } else if (n === 4) {
       await loadComms();
     } else if (n === 5) {
-      const d = await api('/api/review'); if (d) S.review.rows = d.rows;
+      const d = await api('/api/review', { msg: 'Joining coordinates onto the community list' }); if (d) S.review.rows = d.rows;
     }
     render();
   }
   async function loadLevel() {
-    const d = await api('/api/level/' + encodeURIComponent(S.level));
+    const d = await api('/api/level/' + encodeURIComponent(S.level), { msg: `Scoring unmatched ${S.level} names against the places file` });
     if (!d) return;
     S.lvl = d;
     S.adminCandSel = null; S.adminCandQuery = '';
@@ -584,16 +606,17 @@
     const cur = currentAdmin();
     S.adminCands = [];
     if (cur && cur.status === 'pending') {
-      const d = await api(`/api/candidates?level=${encodeURIComponent(S.level)}&key=${encodeURIComponent(cur.key)}&top=0&restrict=1`);
+      const msg = `Looking for fuzzy matches for ${cur.name} at the ${S.level} level`;
+      const d = await api(`/api/candidates?level=${encodeURIComponent(S.level)}&key=${encodeURIComponent(cur.key)}&top=0&restrict=1`, { msg });
       if (d) S.adminCands = d.candidates;
       if (!S.adminCands.length) {
-        const d2 = await api(`/api/candidates?level=${encodeURIComponent(S.level)}&key=${encodeURIComponent(cur.key)}&top=0&restrict=0`);
+        const d2 = await api(`/api/candidates?level=${encodeURIComponent(S.level)}&key=${encodeURIComponent(cur.key)}&top=0&restrict=0`, { msg: msg + ' (whole country)' });
         if (d2 && d2.candidates.length) { S.adminCands = d2.candidates; }
       }
     }
   }
   async function loadHist() {
-    const d = await api('/api/histogram?restrict=' + (form().restrict === false ? '0' : '1'));
+    const d = await api('/api/histogram?restrict=' + (form().restrict === false ? '0' : '1'), { msg: 'Scoring the best candidate for every unmatched community' });
     if (d) S.hist = d;
   }
   async function loadComms(keepSel) {
@@ -610,7 +633,7 @@
     if (!comm) return;
     const restrict = form().restrict === false ? '0' : '1';
     const [cd, pl] = await Promise.all([
-      comm.status === 'pending' ? api(`/api/candidates?level=leaf&key=${encodeURIComponent(comm.id)}&top=3&restrict=${restrict}`) : Promise.resolve(null),
+      comm.status === 'pending' ? api(`/api/candidates?level=leaf&key=${encodeURIComponent(comm.id)}&top=3&restrict=${restrict}`, { msg: `Ranking candidate places for ${comm.name}` }) : Promise.resolve(null),
       api(`/api/places?target=${encodeURIComponent(comm.id)}`),
     ]);
     if (cd) c.cands = cd.candidates;
@@ -630,7 +653,7 @@
     next1: async () => {
       if (S.sub === 1 && fileReady()) { S.sub = 2; await loadGazCountries(); render(); return; }
       if (S.sub === 2 && placesReady() && paired()) { S.sub = 3; if (S.st.has_lookups) await loadHist(); render(); return; }
-      if (S.sub === 3) { const d = await api('/api/lookups', { json: {} }); if (d) { S.level = hierLevels()[0]; await enterStage(2); } }
+      if (S.sub === 3) { const d = await api('/api/lookups', { json: {}, msg: 'Running exact and near-exact matching at every level' }); if (d) { S.level = hierLevels()[0]; await enterStage(2); } }
     },
     'pick-file': el => {
       const role = el.dataset.role;
@@ -649,20 +672,21 @@
     'gaz-fetch': async () => {
       for (const a of S.gaz.sel) {
         S.gaz.log.push('fetching OSM for ' + a + '…'); render();
-        const d = await api('/api/gazetteer/fetch-osm', { json: { iso3: S.gaz.iso3, admin1: a } });
+        const d = await api('/api/gazetteer/fetch-osm', { json: { iso3: S.gaz.iso3, admin1: a }, msg: `Fetching OpenStreetMap places for ${a}` });
         S.gaz.log[S.gaz.log.length - 1] = d ? `${a}: ${d.count} OSM places${d.cached ? ' (cached)' : ''}` : `${a}: failed`;
         render();
       }
     },
     'gaz-build': async () => {
-      const d = await api('/api/gazetteer/build', { json: { iso3: S.gaz.iso3, admin1: S.gaz.sel } });
+      const d = await api('/api/gazetteer/build', { json: { iso3: S.gaz.iso3, admin1: S.gaz.sel }, msg: 'Assembling named places from GeoNames and OSM' });
       if (d) { S.gaz.log = d.log; S.gaz.open = false; toast(`${d.count} named places built`); }
       render();
     },
     'level': async el => { const l = el.dataset.l; if (l === S.level) return; S.level = l; S.adminSel = null; await loadLevel(); render(); },
     'level-next': async () => {
       const lv = hierLevels(); const i = lv.indexOf(S.level);
-      const d = await api('/api/lookups', { json: {} }); if (!d) return;
+      const nextName = i < lv.length - 1 ? `the ${lv[i + 1]} level` : 'the community level';
+      const d = await api('/api/lookups', { json: {}, msg: `Re-running exact matching so ${nextName} reflects the harmonized ${S.level} names` }); if (!d) return;
       if (i < lv.length - 1) { S.level = lv[i + 1]; S.adminSel = null; await loadLevel(); render(); }
       else await enterStage(3);
     },
@@ -672,7 +696,7 @@
       const cur = currentAdmin(); if (!cur) return;
       const picked = S.adminCandSel || (S.adminCands[0] && S.adminCands[0].ref_key);
       const cand = S.adminCands.find(c => c.ref_key === picked); if (!cand) return;
-      const d = await api('/api/link', { json: { level: S.level, target_key: cur.key, ref_key: cand.ref_key, score: cand.score, target_name: cur.name } });
+      const d = await api('/api/link', { json: { level: S.level, target_key: cur.key, ref_key: cand.ref_key, score: cand.score, target_name: cur.name }, msg: `Linking ${cur.name} → ${cand.ref_name}` });
       if (d) { S.adminSel = null; await loadLevel(); render(); }
     },
     'admin-noeq': async () => { const cur = currentAdmin(); if (!cur) return; const d = await api('/api/no-equivalent', { json: { level: S.level, target_key: cur.key, target_name: cur.name } }); if (d) { S.adminSel = null; await loadLevel(); render(); } },
@@ -683,12 +707,13 @@
     },
     'admin-skip': () => { const rows = S.lvl.rows.filter(r => r.status === 'pending'); const cur = currentAdmin(); const i = rows.findIndex(r => r.key === (cur && cur.key)); const nxt = rows[i + 1] || rows[0]; S.adminSel = nxt ? nxt.key : null; S.adminCandSel = null; loadAdminCands().then(render); },
     'accept-above': async el => {
-      const d = await api('/api/accept-above', { json: { level: S.stage === 2 ? S.level : 'leaf', threshold: Number(el.dataset.thr) } });
+      const lvl = S.stage === 2 ? S.level : 'leaf';
+      const d = await api('/api/accept-above', { json: { level: lvl, threshold: Number(el.dataset.thr) }, msg: `Applying fuzzy suggestions above ${fmt(el.dataset.thr)} at the ${lvl} level` });
       if (d) { toast(d.applied ? `accepted ${d.applied} suggestions` : 'nothing at or above that score'); if (S.stage === 2) await loadLevel(); render(); }
     },
     run: async () => {
       const f = form();
-      const d = await api('/api/run', { json: { threshold: f.threshold == null ? 85 : f.threshold, restrict: f.restrict !== false } });
+      const d = await api('/api/run', { json: { threshold: f.threshold == null ? 85 : f.threshold, restrict: f.restrict !== false }, msg: `Running fuzzy matching at the community level, accepting above ${fmt(f.threshold == null ? 85 : f.threshold)}` });
       if (d) { S.hist = { bins: d.histogram, scores: null }; S.runLog = d.log; await loadHist(); }
       render();
     },

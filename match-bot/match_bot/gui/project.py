@@ -52,11 +52,23 @@ def _read_csv_str(path) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+def fix_mojibake(value) -> str:
+    """Repair UTF-8 text that was decoded as Latin-1 ("BouakÃ©" -> "Bouaké"),
+    which some geoBoundaries files carry."""
+    s = '' if value is None else str(value)
+    if 'Ã' in s or 'Â' in s:
+        try:
+            return s.encode('latin-1').decode('utf-8')
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            return s
+    return s
+
+
 def std(value) -> str:
     """Standardize the way the pipeline does (lower, no accents)."""
     if value is None:
         return ''
-    s = remove_accents(str(value))
+    s = remove_accents(fix_mojibake(value))
     s = normalize_text(s, case='lower')
     return '' if s is None or (isinstance(s, float) and pd.isna(s)) else str(s)
 
@@ -136,6 +148,12 @@ class Project:
     # ---- config ----------------------------------------------------------
     def levels(self) -> List[str]:
         return [h['label'] for h in self.form().get('target_hierarchy', []) if h.get('label')] + ['leaf']
+
+    def pipeline(self):
+        """Loaded + mapped MatchingPipeline, built once per Project instance."""
+        if getattr(self, '_pipeline', None) is None:
+            self._pipeline = sg._hier_pipeline(self.config())
+        return self._pipeline
 
     def config(self) -> MatcherConfig:
         f = self.form()
@@ -243,7 +261,7 @@ class Project:
             v = r[f'h{i}']
             if v and v not in parents:
                 parents[v] = ' › '.join(r[f'h{k}_raw'] for k in range(i))
-        best = sg.best_scores(self.config(), label, restrict=True) if not lk.empty else {}
+        best = sg.best_scores(self.config(), label, restrict=True, pipeline=self.pipeline()) if not lk.empty else {}
         rows, ref_only = [], []
         for _, r in lk.iterrows():
             mt = r['match_type']
@@ -267,13 +285,54 @@ class Project:
                 'total_communities': int(sum(counts.values()))}
 
     def candidates(self, level, key, restrict=True, top=3) -> List[Dict]:
-        cands = sg.candidates(self.config(), level, key, restrict=restrict, top=top)
+        cands = sg.candidates(self.config(), level, key, restrict=restrict, top=top,
+                              pipeline=None if level == 'leaf' else self.pipeline())
         if level == 'leaf' and cands:
             coords = self._ref_coords()
             for c in cands:
                 lat, lon, raw = coords.get(links._norm_id(c['ref_id']), ('', '', ''))
                 c.update({'lat': lat, 'lon': lon, 'ref_name_raw': raw or c['ref_name']})
         return cands
+
+    def ref_level_values(self, label) -> Dict[str, str]:
+        """std value -> raw value for the reference column paired with ``label``."""
+        f = self.form()
+        labels = self.levels()[:-1]
+        if label not in labels:
+            return {}
+        hier = [h.get('column') for h in f.get('ref_hierarchy', [])]
+        col = hier[labels.index(label)] if labels.index(label) < len(hier) else None
+        df = _read_csv_str(self.ref_path)
+        if not col or col not in df.columns:
+            return {}
+        out = {}
+        for v in df[col].unique():
+            if v and std(v) not in out:
+                out[std(v)] = v
+        return out
+
+    def annotate_boundaries(self, geojson: Dict, name_property: str, label: str) -> Dict:
+        """Add ``_ref`` (matched reference std value) to every feature. Exact
+        normalized match first, then fuzzy >= 90. Returns match stats."""
+        refs = self.ref_level_values(label)
+        matched = set()
+        for ft in geojson.get('features', []):
+            props = ft.setdefault('properties', {})
+            name = std(props.get(name_property, ''))
+            hit = name if name in refs else ''
+            if not hit and name:
+                best, bs = '', 0
+                for r in refs:
+                    sc = sg.score_pair(name, r)
+                    if sc > bs:
+                        best, bs = r, sc
+                if bs >= 90:
+                    hit = best
+            props['_ref'] = hit
+            props['_name'] = fix_mojibake(props.get(name_property, ''))
+            if hit:
+                matched.add(hit)
+        return {'matched': len(matched), 'reference_values': len(refs)}
 
     # ---- reference points ------------------------------------------------
     def _ref_coords(self) -> Dict[str, tuple]:
