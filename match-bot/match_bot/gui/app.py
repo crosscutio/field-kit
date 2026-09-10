@@ -55,7 +55,16 @@ def create_app():
     # ---- page ------------------------------------------------------------
     @app.route('/')
     def index():
-        return render_template('geocoder.html')
+        # version the static assets by mtime so a browser never runs a stale script
+        static = Path(app.static_folder)
+        v = int(max(p.stat().st_mtime for p in static.glob('geocoder.*')))
+        return render_template('geocoder.html', asset_v=v)
+
+    @app.after_request
+    def _no_stale_assets(resp):
+        if request.path.startswith('/static/'):
+            resp.headers['Cache-Control'] = 'no-cache'
+        return resp
 
     # ---- project state ---------------------------------------------------
     @app.route('/api/state', methods=['GET', 'POST'])

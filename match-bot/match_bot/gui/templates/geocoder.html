@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Match Bot · Community Geocoder{% endblock %}
 {% block head %}
-  <link rel="stylesheet" href="{{ url_for('static', filename='geocoder.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='geocoder.css') }}?v={{ asset_v }}">
 {% endblock %}
 {% block body %}
   <div class="app">
@@ -22,5 +22,5 @@
   <input type="file" id="file-boundaries" accept=".geojson,.json" hidden>
 {% endblock %}
 {% block scripts %}
-  <script src="{{ url_for('static', filename='geocoder.js') }}"></script>
+  <script src="{{ url_for('static', filename='geocoder.js') }}?v={{ asset_v }}"></script>
 {% endblock %}

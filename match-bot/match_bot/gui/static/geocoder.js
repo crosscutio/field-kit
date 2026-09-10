@@ -12,7 +12,7 @@
     lvl: null,                // admin stage: level rows payload
     adminSel: null, adminCands: [], adminCandSel: null, adminQuery: '', adminCandQuery: '',
     hist: null, runLog: '',
-    comm: { rows: [], all: false, sel: null, cands: [], candSel: 0, pin: null, query: '', places: [] },
+    comm: { rows: [], all: false, sel: null, cands: [], candSel: 0, pin: null, query: '', places: [], open: new Set(), revealed: null },
     review: { rows: [], query: '', filter: 'all' },
     logOpen: false, log: [],
     gaz: { countries: [], iso3: '', admin1: [], sel: [], preview: null, log: [], open: false },
@@ -95,17 +95,44 @@
     const pane = $('#pane');
     const mapwrap = $('#mapwrap');
     const corridor = S.stage === 2 || S.stage === 4;
+    // Build the markup before touching the pane: if a stage fails to render, the
+    // previous screen stays intact instead of being left floating over the map.
+    let html;
+    try {
+      html = S.stage === 1 ? renderStage1() : S.stage === 2 ? renderStage2() : S.stage === 3 ? renderStage3() : S.stage === 4 ? renderStage4() : renderStage5();
+    } catch (e) {
+      console.error('render failed at stage ' + S.stage, e);
+      toast(`could not draw stage ${S.stage}: ${e.message}`, 8000);
+      return;
+    }
     pane.className = 'pane ' + (corridor ? 'corridor' : 'flow');
     mapwrap.hidden = !corridor;
-    if (S.stage === 1) pane.innerHTML = renderStage1();
-    else if (S.stage === 2) pane.innerHTML = renderStage2();
-    else if (S.stage === 3) pane.innerHTML = renderStage3();
-    else if (S.stage === 4) pane.innerHTML = renderStage4();
-    else pane.innerHTML = renderStage5();
+    pane.innerHTML = html;
     renderDrawer();
+    if (corridor) { positionFlyout(); const dl = $('#pane .dock .panel-list'); if (dl) dl.addEventListener('scroll', positionFlyout); }
     if (corridor) { ensureMap(); setTimeout(() => { MAP.invalidateSize(); if (S.stage === 2) drawAdminMap(); else drawLinkMap(); }, 0); }
   }
 
+  function positionFlyout() {
+    // pin the flyout's top to the selected dock row so it reads as growing out of that name
+    const fly = $('#pane .flyout'); if (!fly) return;
+    const dock = $('#pane .dock'); const pane = $('#pane');
+    const sel = dock && (dock.querySelector('.row-item.sel') || null);
+    if (sel && fly.dataset.anchor !== positionFlyout._last) { positionFlyout._last = fly.dataset.anchor; sel.scrollIntoView({ block: 'nearest' }); }
+    const pr = pane.getBoundingClientRect(); const dr = dock.getBoundingClientRect();
+    const list = dock.querySelector('.panel-list'); const lr = list ? list.getBoundingClientRect() : dr;
+    let y = sel ? sel.getBoundingClientRect().top - pr.top : dr.top - pr.top;
+    // keep the anchor inside the visible part of the list
+    y = Math.max(lr.top - pr.top, Math.min(y, lr.bottom - pr.top - 40));
+    const maxH = pr.height - 86;
+    fly.style.top = y + 'px';
+    fly.style.maxHeight = maxH + 'px';
+    const fh = fly.getBoundingClientRect().height;
+    const recent = $('#pane .recent');
+    const bottom = recent ? recent.getBoundingClientRect().top - pr.top - 10 : pr.height - 14;
+    if (y + fh > bottom) { const ny = Math.max(72, bottom - fh); fly.style.setProperty('--tab-y', (y - ny + 20) + 'px'); fly.style.top = ny + 'px'; }
+    else fly.style.setProperty('--tab-y', '20px');
+  }
   function renderSide() {
     const side = $('#side');
     const rail = S.stage === 2 || S.stage === 4;
@@ -322,10 +349,10 @@
           return `<div class="row-item ${sel ? 'sel' : ''} ${r.status !== 'pending' ? 'done' : ''}" data-act="admin-sel" data-key="${esc(r.key)}"><div class="main-col"><div class="name">${esc(r.name)}</div><div class="meta">${esc(meta)}</div></div><span class="right">${right}</span></div>`;
         }).join('') || '<div class="cand-empty">nothing at this level</div>'}</div>
         <div class="panel-ft"><button class="btn" data-act="accept-above" data-thr="90">Accept suggestions above 0.90</button><button class="btn ${pend.length ? 'outline' : 'primary'}" data-act="level-next">${nextLabel}</button></div></div>
-      <div class="inspector tall"><div class="insp-hd"><div class="h2">${esc(cur ? cur.name : '—')}</div><div class="meta">${esc(cur ? `${S.level} · ${plural(cur.communities, 'community', 'communities')}` : '')}</div></div>
+      ${cur ? `<div class="flyout" data-anchor="${esc(cur.key)}"><div class="insp-hd"><div class="h2">${esc(cur.name)}</div><div class="meta">${esc(cur ? `${S.level} · ${plural(cur.communities, 'community', 'communities')}` : '')}</div></div>
         <div class="insp-sub"><div class="top"><span class="label-caps">All candidates</span><span class="mono faint" style="font-size:10px">${cands.length} of ${S.adminCands.length}</span></div><input class="input" placeholder="Filter candidates" value="${esc(S.adminCandQuery)}" data-input="adminCandQuery"></div>
         <div class="panel-list">${cands.map(c => `<div class="cand ${c.ref_key === picked ? 'on' : ''}" data-act="admin-cand" data-key="${esc(c.ref_key)}"><div class="body"><div class="name">${esc(c.ref_name)}</div><div class="meta">${esc(Object.entries(c.parents || {}).map(([k, v]) => k + '=' + v).join(' › ') || 'top level')}</div></div><span class="score">${fmt(c.score)}</span></div>`).join('') || (cur && cur.status === 'pending' ? '<div class="cand-empty">no unmatched reference names in this parent group — mark “no equivalent” or fix the parent level</div>' : cur ? `<div class="cand-empty">${cur.status === 'linked' ? 'linked to ' + esc(cur.ref) : 'marked no equivalent'}</div>` : '')}</div>
-        <div class="panel-ft">${cur && cur.status === 'pending' ? `<button class="btn primary" style="height:36px" data-act="admin-link" ${picked ? '' : 'disabled'}>Link &amp; continue</button><div style="display:flex;gap:8px"><button class="btn quiet" style="flex:1;height:30px" data-act="admin-noeq">No equivalent</button><button class="btn quiet" style="flex:1;height:30px" data-act="admin-skip">Skip</button></div>` : cur ? `<button class="btn" data-act="admin-unlink">Undo this decision</button>` : ''}</div></div>`;
+        <div class="panel-ft">${cur && cur.status === 'pending' ? `<button class="btn primary" style="height:36px" data-act="admin-link" ${picked ? '' : 'disabled'}>Link &amp; continue</button><div style="display:flex;gap:8px"><button class="btn quiet" style="flex:1;height:30px" data-act="admin-noeq">No equivalent</button><button class="btn quiet" style="flex:1;height:30px" data-act="admin-skip">Skip</button></div>` : cur ? `<button class="btn" data-act="admin-unlink">Undo this decision</button>` : ''}</div></div>` : ''}`;
   }
   function currentAdmin() {
     const rows = S.lvl ? S.lvl.rows : [];
@@ -366,12 +393,19 @@
   }
 
   // ----- stage 4 -----
+  function pathKeys(row, lv) {
+    // group keys for every ancestor of a community row, outermost first
+    const out = []; let k = '';
+    lv.forEach(l => { k += '\u001f' + ((row.parents || {})[l] || '—'); out.push(k); });
+    return out;
+  }
   function currentComm() {
     const rows = S.comm.rows;
     return rows.find(r => r.id === S.comm.sel) || rows.find(r => r.status === 'pending') || rows[0] || null;
   }
   function renderStage4() {
     const c = S.comm;
+    if (!c.open) { c.open = new Set(); c.revealed = null; }
     const comm = currentComm();
     const q = c.query.toLowerCase();
     const list = c.rows.filter(r => !q || r.name.toLowerCase().includes(q) || (r.ref_name || '').toLowerCase().includes(q));
@@ -381,26 +415,44 @@
     const restrict = form().restrict !== false;
     const noCandsNote = restrict ? 'no candidate inside the linked admin unit — click the map to place a point, or turn off the admin restriction in stage 3' : 'no candidate above 0.35 — click the map to place a point';
     const saveOn = !!c.pin || (cands.length > 0 && comm && comm.status === 'pending');
+    const lv = hierLevels();
+    const commRow = (r, depth) => {
+      const sel = comm && comm.id === r.id;
+      const right = r.status === 'linked' ? (r.score != null ? fmt(r.score) : 'auto') : r.status === 'pin' ? 'pin' : r.status === 'no_equivalent' ? '—' : depth ? '' : String(r.pool);
+      const meta = r.status === 'linked' ? `→ ${r.ref_name}` : r.status === 'pin' ? 'dropped pin' : r.status === 'no_equivalent' ? 'no equivalent' : (depth ? plural(r.pool, 'place in pool', 'places in pool') : r.path);
+      return `<div class="row-item d${depth} ${sel ? 'sel' : ''} ${r.status !== 'pending' ? 'done' : ''}" data-act="comm-sel" data-id="${esc(r.id)}"><div class="main-col"><div class="name">${esc(r.name)}</div><div class="meta">${esc(meta)}</div></div><span class="right">${esc(right)}</span></div>`;
+    };
+    // keep the branch holding the current community open, but only when the selection moves
+    if (comm && c.revealed !== comm.id) { c.revealed = comm.id; pathKeys(comm, lv).forEach(k => c.open.add(k)); }
+    const tree = (rows, depth, prefix) => {
+      const label = lv[depth];
+      const groups = new Map();
+      rows.forEach(r => { const g = (r.parents || {})[label] || '—'; if (!groups.has(g)) groups.set(g, []); groups.get(g).push(r); });
+      return [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([g, rs]) => {
+        const key = prefix + '\u001f' + g;
+        const open = c.open.has(key);
+        const pend = rs.filter(r => r.status === 'pending').length;
+        const right = c.all ? `${rs.length - pend}/${rs.length}` : String(pend);
+        const kids = !open ? '' : depth + 1 < lv.length ? tree(rs, depth + 1, key) : rs.map(r => commRow(r, depth + 1)).join('');
+        return `<div class="row-item grp d${depth} ${open ? 'open' : ''}" data-act="comm-grp" data-key="${esc(key)}"><div class="main-col"><div class="name"><span class="caret">${open ? '▾' : '▸'}</span>${esc(g)}</div><div class="meta">${esc(label)}</div></div><span class="right">${esc(right)}</span></div>${kids}`;
+      }).join('');
+    };
+    const listHtml = list.length ? (q || !lv.length ? list.map(r => commRow(r, 0)).join('') : tree(list, 0, '')) : '<div class="cand-empty">everything is linked</div>';
     return `<div class="strip"><span class="title">${esc(comm ? comm.name : '—')}</span><span class="meta">${esc(comm ? comm.path : '')}</span>
         ${restrict && comm ? `<span class="scope-chip" id="scope-chip">places inside ${esc(comm.path || 'the parent admin unit')}</span>` : '<span class="scope-chip off">all places · restriction off</span>'}
         <input class="input" placeholder="Search communities or places" value="${esc(c.query)}" data-input="commQuery">
         <div class="right"><span class="mono muted" style="font-size:11px">${left} left</span><button class="btn sm" data-act="undo" ${S.st.can_undo ? '' : 'disabled'}>Undo</button><button class="btn sm" data-act="log">History</button></div></div>
       <div class="dock"><div class="panel-hd"><span class="caps">${c.all ? 'All' : 'Unlinked'} · ${c.all ? c.rows.length : left}</span><span class="mono" style="cursor:pointer" data-act="toggle-all">${c.all ? 'hide linked' : 'show all ↗'}</span></div>
-        <div class="panel-list">${list.map(r => {
-          const sel = comm && comm.id === r.id;
-          const right = r.status === 'linked' ? (r.score != null ? fmt(r.score) : 'auto') : r.status === 'pin' ? 'pin' : r.status === 'no_equivalent' ? '—' : String(r.pool);
-          const meta = r.status === 'linked' ? `→ ${r.ref_name}` : r.status === 'pin' ? 'dropped pin' : r.status === 'no_equivalent' ? 'no equivalent' : r.path;
-          return `<div class="row-item ${sel ? 'sel' : ''} ${r.status !== 'pending' ? 'done' : ''}" data-act="comm-sel" data-id="${esc(r.id)}"><div class="main-col"><div class="name">${esc(r.name)}</div><div class="meta">${esc(meta)}</div></div><span class="right">${esc(right)}</span></div>`;
-        }).join('') || '<div class="cand-empty">everything is linked</div>'}</div>
+        <div class="panel-list">${listHtml}</div>
         <div class="panel-ft"><div class="foot-stats"><span>${geocoded()} linked</span><span>${manual} by hand</span></div><button class="btn ${left ? 'outline' : 'primary'}" data-act="stage" data-n="5">Review &amp; export →</button></div></div>
-      <div class="inspector"><div class="insp-hd"><div class="h2">${esc(comm ? comm.name : '—')}</div><div class="meta">${esc(comm ? comm.path : '')}</div></div>
+      ${comm ? `<div class="flyout" data-anchor="${esc(comm.id)}"><div class="insp-hd"><div class="h2">${esc(comm.name)}</div><div class="meta">${esc(comm ? comm.path : '')}</div></div>
         <div class="label-caps" style="padding:12px 14px 6px">${cands.length ? 'Candidates · press 1–' + cands.length : 'Candidates'}${restrict ? ' · within parent admin' : ''}</div>
         <div class="panel-list">${comm && comm.status !== 'pending' ? `<div class="cand-empty">${comm.status === 'linked' ? `linked to ${esc(comm.ref_name)} · ${comm.auto ? 'auto' : 'manual'}` : comm.status === 'pin' ? 'has a dropped pin' : 'marked no equivalent'}</div>` : ''}
           ${cands.map((cd, i) => `<div class="cand ${i === c.candSel && !c.pin ? 'on' : ''}" data-act="cand" data-i="${i}"><div class="key">${i + 1}</div><div class="body"><div class="name">${esc(cd.ref_name_raw || cd.ref_name)}</div><div class="meta">${esc(Object.values(cd.ref_parents || {}).filter(Boolean).join(' › '))}</div></div><span class="score">${fmt(cd.score)}</span></div>`).join('')}
           ${c.pin ? `<div class="cand on"><div class="key pin">✚</div><div class="body"><div class="name">Point on the map</div><div class="meta">${c.pin.lat.toFixed(4)}, ${c.pin.lon.toFixed(4)}</div></div><span class="mono muted" style="font-size:11px;cursor:pointer" data-act="clear-pin">clear</span></div>` : ''}
           ${!cands.length && !c.pin && comm && comm.status === 'pending' ? `<div class="cand-empty">${esc(noCandsNote)}</div>` : ''}</div>
         <div class="panel-ft"><button class="btn primary" style="height:36px" data-act="save" ${saveOn ? '' : 'disabled'}>${c.pin ? 'Save point ↵' : 'Save match ↵'}</button>
-          ${comm && comm.status !== 'pending' ? `<button class="btn quiet" style="height:30px" data-act="comm-unlink">${comm.status === 'pin' ? 'Remove pin' : comm.status === 'linked' ? 'Unlink' : 'Clear decision'}</button>` : `<div style="display:flex;gap:8px"><button class="btn quiet" style="flex:1;height:30px" data-act="comm-noeq">No equivalent</button><button class="btn quiet" style="flex:1;height:30px" data-act="skip">Skip</button></div>`}</div></div>
+          ${comm && comm.status !== 'pending' ? `<button class="btn quiet" style="height:30px" data-act="comm-unlink">${comm.status === 'pin' ? 'Remove pin' : comm.status === 'linked' ? 'Unlink' : 'Clear decision'}</button>` : `<div style="display:flex;gap:8px"><button class="btn quiet" style="flex:1;height:30px" data-act="comm-noeq">No equivalent</button><button class="btn quiet" style="flex:1;height:30px" data-act="skip">Skip</button></div>`}</div></div>` : ''}
       <div class="recent"><div class="top"><span class="label-caps">Recent</span><span class="mono faint" style="font-size:10px;cursor:pointer" data-act="log">full log ↗</span></div><div class="lines">${(S.st.recent && S.st.recent.length ? S.st.recent : [{ text: 'nothing yet' }]).map(e => `<div>${esc(e.text)}</div>`).join('')}</div></div>`;
   }
 
@@ -442,11 +494,13 @@
     LAYERS.places = L.layerGroup().addTo(MAP);
     LAYERS.cands = L.layerGroup().addTo(MAP);
     LAYERS.pin = L.layerGroup().addTo(MAP);
+    MAP.on('zoomend moveend', placeLabels);
     MAP.on('click', e => { if (S.stage === 4 && currentComm() && currentComm().status === 'pending') { S.comm.pin = { lat: e.latlng.lat, lon: e.latlng.lng }; render(); } });
     return MAP;
   }
-  const PAD = { paddingTopLeft: [330, 80], paddingBottomRight: [350, 80] };
-  function clearLayers() { Object.keys(LAYERS).forEach(k => { if (k !== 'base' && LAYERS[k]) LAYERS[k].clearLayers(); }); }
+  // keep fitted areas clear of the dock + flyout on the left, and the Recent panel at the bottom
+  const PAD = { paddingTopLeft: [720, 80], paddingBottomRight: [40, 120] };
+  function clearLayers() { Object.keys(LAYERS).forEach(k => { if (k !== 'base' && LAYERS[k]) LAYERS[k].clearLayers(); }); DOT_LABELS.length = 0; }
 
   const BOUNDS_CACHE = {};
   async function loadBoundaries(label) {
@@ -549,14 +603,17 @@
     }
     const candIds = new Set(cands.map(x => x.ref_id));
     const pts = [];
-    c.places.forEach(p => {
+    // grey (unlinked) dots first, black (linked) dots after so they stay on top
+    [...c.places].sort((a, b) => (a.linked ? 1 : 0) - (b.linked ? 1 : 0)).forEach(p => {
       if (candIds.has(p.id)) return;
       const m = L.circleMarker([p.lat, p.lon], { radius: p.linked ? 6 : 4.5, color: '#fff', weight: 1, fillColor: p.linked ? '#111110' : '#c4c4bd', fillOpacity: 1 })
-        .bindTooltip(`${p.name}${p.linked ? ' · linked' : ' · click to pick'}`, { direction: 'top', className: 'poly-label' });
+        .bindTooltip(p.name, { permanent: true, direction: 'bottom', offset: [0, 4], className: 'dot-label', interactive: false });
       if (!p.linked && comm && comm.status === 'pending') m.on('click', e => { L.DomEvent.stopPropagation(e); pickFromMap(p); });
       m.addTo(LAYERS.places);
+      DOT_LABELS.push({ marker: m, name: p.name, linked: !!p.linked });
       pts.push([p.lat, p.lon]);
     });
+    placeLabels();
     cands.forEach((cd, i) => {
       if (cd.lat === '' || cd.lat == null) return;
       const on = i === c.candSel && !c.pin;
@@ -576,6 +633,28 @@
       if (deepest) bb = bb ? bb.extend(deepest.bounds) : deepest.bounds;
       if (bb) { try { MAP.fitBounds(bb, Object.assign({ maxZoom: 12 }, PAD)); } catch (e) { /* ignore */ } }
     }
+  }
+  // Show a dot's label only where it will not collide with a label already shown.
+  // Linked (black) dots get first claim on the space; the rest fill in as zoom spreads them out.
+  const DOT_LABELS = [];
+  function placeLabels() {
+    if (!MAP || !DOT_LABELS.length) return;
+    const size = MAP.getSize();
+    const taken = [];
+    // numbered candidate markers and the dropped pin own their space first
+    [LAYERS.cands, LAYERS.pin].forEach(g => g && g.eachLayer(l => { if (!l.getLatLng) return; const pt = MAP.latLngToContainerPoint(l.getLatLng()); taken.push({ l: pt.x - 16, t: pt.y - 16, r: pt.x + 16, b: pt.y + 16 }); }));
+    const order = [...DOT_LABELS].sort((a, b) => (b.linked ? 1 : 0) - (a.linked ? 1 : 0) || a.name.localeCompare(b.name));
+    order.forEach(d => {
+      const tt = d.marker.getTooltip(); const el = tt && tt.getElement(); if (!el) return;
+      const pt = MAP.latLngToContainerPoint(d.marker.getLatLng());
+      const w = d.name.length * 6.4 + 6, h = 16;
+      const box = { l: pt.x - w / 2, t: pt.y + 8, r: pt.x + w / 2, b: pt.y + 8 + h };
+      const onScreen = box.r > 0 && box.l < size.x && box.b > 0 && box.t < size.y;
+      const clash = onScreen && taken.some(o => box.l < o.r && box.r > o.l && box.t < o.b && box.b > o.t);
+      const show = onScreen && !clash;
+      el.classList.toggle('off', !show);
+      if (show) taken.push(box);
+    });
   }
   function pickFromMap(p) {
     const c = S.comm;
@@ -742,6 +821,7 @@
       render();
     },
     'toggle-all': async () => { S.comm.all = !S.comm.all; await loadComms(true); render(); },
+    'comm-grp': el => { const k = el.dataset.key; if (S.comm.open.has(k)) S.comm.open.delete(k); else S.comm.open.add(k); redrawList('.dock .panel-list', () => renderStage4()); positionFlyout(); },
     'comm-sel': async el => { S.comm.sel = el.dataset.id; await loadCommDetail(); render(); },
     cand: el => { S.comm.candSel = Number(el.dataset.i); S.comm.pin = null; drawLinkMap._keep = true; render(); },
     'clear-pin': () => { S.comm.pin = null; render(); },
@@ -761,7 +841,7 @@
     undo: async () => { const d = await api('/api/undo', { json: {} }); if (d) { toast('undid · ' + d.undone); await refreshStage(); } },
     log: async () => { const d = await api('/api/history'); if (d) { S.log = d.entries; S.logOpen = true; renderDrawer(); } },
     'log-close': () => { S.logOpen = false; renderDrawer(); },
-    reset: async () => { if (!confirm('Start a new project? Uploaded files, links and history for this session are deleted.')) return; const d = await api('/api/reset', { json: {} }); if (d) { S.stage = 1; S.sub = 1; S.level = null; S.lvl = null; S.hist = null; S.comm = { rows: [], all: false, sel: null, cands: [], candSel: 0, pin: null, query: '', places: [] }; S.review.rows = []; S.gaz.open = false; render(); } },
+    reset: async () => { if (!confirm('Start a new project? Uploaded files, links and history for this session are deleted.')) return; const d = await api('/api/reset', { json: {} }); if (d) { S.stage = 1; S.sub = 1; S.level = null; S.lvl = null; S.hist = null; S.comm = { rows: [], all: false, sel: null, cands: [], candSel: 0, pin: null, query: '', places: [], open: new Set(), revealed: null }; S.review.rows = []; S.gaz.open = false; render(); } },
   };
   async function undoDecision(level, key) {
     // "no equivalent" has no direct clear endpoint; go through undo if it was the last action, else re-link path via unlink is not applicable.
@@ -834,8 +914,8 @@
     const t = e.target;
     if (t.dataset.field === 'threshold') { const l = $('#thr-label'); if (l) l.textContent = fmt(t.value); return; }
     if (t.dataset.input === 'adminQuery') { S.adminQuery = t.value; redrawList('.dock .panel-list', () => renderStage2()); }
-    else if (t.dataset.input === 'adminCandQuery') { S.adminCandQuery = t.value; redrawList('.inspector .panel-list', () => renderStage2()); }
-    else if (t.dataset.input === 'commQuery') { S.comm.query = t.value; redrawList('.dock .panel-list', () => renderStage4()); }
+    else if (t.dataset.input === 'adminCandQuery') { S.adminCandQuery = t.value; redrawList('.flyout .panel-list', () => renderStage2()); }
+    else if (t.dataset.input === 'commQuery') { S.comm.query = t.value; redrawList('.dock .panel-list', () => renderStage4()); positionFlyout(); }
     else if (t.dataset.input === 'reviewQuery') { S.review.query = t.value; redrawList('.table .rows', () => renderStage5()); }
   });
   document.addEventListener('focusout', async e => {
