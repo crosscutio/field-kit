@@ -34,6 +34,11 @@ HIST_BINS = [(50 + 5 * i, 55 + 5 * i) for i in range(10)]   # 50..100 by 5
 DEFAULT_FORM = {
     'project_name': 'Untitled project',
     'target_filename': '', 'target_name_column': '', 'target_hierarchy': [],
+    'target_source': 'upload',   # 'upload' | 'icr'
+    # ICR SDI connection + import query; auth_secret never leaves this file
+    'icr': {},
+    # FHIR form-response pull: connection, selection and per-form answer mapping
+    'fhir': {},
     'ref_filename': '', 'ref_source': None, 'ref_name_column': '', 'ref_id_column': ROW_ID,
     'ref_lat_column': '', 'ref_lon_column': '', 'ref_hierarchy': [],
     'boundaries_source': 'auto', 'country': '', 'boundary_files': {}, 'boundary_levels': {},
@@ -75,6 +80,21 @@ def std(value) -> str:
     return '' if s is None or (isinstance(s, float) and pd.isna(s)) else str(s)
 
 
+SECRET_KEYS = ('icr', 'fhir')
+
+
+def public_form(f: Dict) -> Dict:
+    """The form as sent to the browser: stored credentials are replaced by a
+    flag, so they live only in form_state.json."""
+    out = dict(f)
+    for k in SECRET_KEYS:
+        if isinstance(out.get(k), dict) and 'auth_secret' in out[k]:
+            conn = dict(out[k])
+            conn['auth_secret_set'] = bool(conn.pop('auth_secret'))
+            out[k] = conn
+    return out
+
+
 class Project:
     def __init__(self, session_dir):
         self.sd = Path(session_dir)
@@ -97,6 +117,11 @@ class Project:
 
     def boundary_path(self, label):
         return self.sd / f'boundaries_{label}.geojson'
+
+    def icr_boundary_path(self, level: int):
+        """ICR admin units at admin_level ``level`` (1-based), keyed by level
+        position so relabelling the hierarchy keeps them attached."""
+        return self.sd / f'icr_admin_{level}.geojson'
 
     def ref_file(self) -> str:
         """Reference CSV the engine reads: the boundary-tagged copy when it
@@ -126,6 +151,12 @@ class Project:
     def save_table(self, role: str, stream, filename: str) -> Dict:
         """Store an uploaded CSV as target.csv / ref.csv with a row-id column."""
         df = pd.read_csv(stream, dtype=str).fillna('')
+        info = self._write_table(role, df, filename)
+        if role == 'target':
+            self.update_form(target_source='upload')
+        return info
+
+    def _write_table(self, role: str, df: pd.DataFrame, filename: str) -> Dict:
         df.columns = [str(c) for c in df.columns]
         if ROW_ID not in df.columns:
             df.insert(0, ROW_ID, [str(i + 1) for i in range(len(df))])
@@ -143,6 +174,77 @@ class Project:
                 self.ref_tagged_path.unlink()
         self.update_form(**upd)
         return self.table_info(role)
+
+    # ---- ICR import -----------------------------------------------------
+    ICR_TARGET_COLUMNS = ['point_id', 'name', 'status', 'admin1_name', 'admin1_code',
+                          'admin2_name', 'admin2_code', 'icr_latitude', 'icr_longitude']
+
+    ICR_KEEP = ('all', 'coords', 'missing')
+
+    @property
+    def icr_sites_path(self): return self.sd / 'icr_sites.csv'
+
+    def save_icr_sites(self, rows: List[Dict], filename: str) -> Dict:
+        """Store every registry row read (icr_sites.csv) and write the chosen
+        subset as target.csv. The registry's own point is kept as
+        icr_latitude/icr_longitude; rows that have one are overwritten by the
+        matching result if the user imports them."""
+        def num(v):
+            return '' if v is None or (isinstance(v, float) and pd.isna(v)) else repr(float(v))
+        df = pd.DataFrame([{
+            'point_id': r['id'], 'name': r.get('name') or '', 'status': r.get('status') or '',
+            'admin1_name': r.get('admin1_name') or '', 'admin1_code': r.get('admin1_code') or '',
+            'admin2_name': r.get('admin2_name') or '', 'admin2_code': r.get('admin2_code') or '',
+            'icr_latitude': num(r.get('position_latitude')), 'icr_longitude': num(r.get('position_longitude')),
+        } for r in rows], columns=self.ICR_TARGET_COLUMNS)
+        df.to_csv(self.icr_sites_path, index=False)
+        old = [h.get('label') for h in self.form().get('target_hierarchy', [])]
+        labels = old if len(old) == 2 and all(old) else ['admin1', 'admin2']
+        self.update_form(target_source='icr', target_name_column='name',
+                         target_hierarchy=[{'column': 'admin1_name', 'label': labels[0]},
+                                           {'column': 'admin2_name', 'label': labels[1]}],
+                         ref_tagged=None, ref_hierarchy=[])
+        has = (df['icr_latitude'] != '') & (df['icr_longitude'] != '')
+        # default to the records that need a location, so nothing is overwritten unasked
+        return self.choose_icr_records('missing' if (~has).any() else 'all', filename)
+
+    def choose_icr_records(self, keep: str, filename: Optional[str] = None) -> Dict:
+        """Write target.csv from the imported rows: all of them, only those with
+        registry coordinates, or only those that need a location."""
+        if keep not in self.ICR_KEEP:
+            raise ValueError(f'Unknown record choice {keep!r}')
+        df = _read_csv_str(self.icr_sites_path)
+        if df.empty:
+            raise ValueError('Import records from the registry first')
+        has = (df['icr_latitude'] != '') & (df['icr_longitude'] != '')
+        sub = df[has] if keep == 'coords' else df[~has] if keep == 'missing' else df
+        if sub.empty:
+            raise ValueError('No records match that choice')
+        info = self._write_table('target', sub.reset_index(drop=True), filename or self.form().get('target_filename', ''))
+        icr = dict(self.form().get('icr') or {})
+        icr['keep'] = keep
+        self.update_form(icr=icr)
+        return info
+
+    def save_icr_boundaries(self, by_level: Dict[int, Dict], country: str) -> Dict[int, int]:
+        """Store the registry's admin units (GeoJSON per admin_level) and make
+        them the boundaries for tagging named places."""
+        counts = {}
+        for level, gj in by_level.items():
+            self.icr_boundary_path(level).write_text(json.dumps(gj), encoding='utf-8')
+            counts[level] = len(gj.get('features', []))
+        self.update_form(boundaries_source='icr', country=country, boundary_levels={}, ref_tagged=None)
+        return counts
+
+    def icr_coverage(self) -> Dict:
+        """Rows read from the registry, rows that already carry a registry
+        point, rows without, and which of those groups is being imported."""
+        df = _read_csv_str(self.icr_sites_path if self.icr_sites_path.exists() else self.target_path)
+        keep = (self.form().get('icr') or {}).get('keep', 'all')
+        if df.empty or 'icr_latitude' not in df.columns:
+            return {'rows': int(len(df)), 'with_coords': 0, 'missing': int(len(df)), 'keep': keep}
+        has = (df['icr_latitude'] != '') & (df['icr_longitude'] != '')
+        return {'rows': int(len(df)), 'with_coords': int(has.sum()), 'missing': int((~has).sum()), 'keep': keep}
 
     def table_info(self, role: str) -> Optional[Dict]:
         path = self.target_path if role == 'target' else self.ref_path
@@ -244,11 +346,12 @@ class Project:
         total = int(len(_read_csv_str(self.target_path))) if self.target_path.exists() else 0
         pinned = int(len(pins))
         return {
-            'form': f, 'ready': self.ready(), 'levels': self.levels(), 'stats': stats,
+            'form': public_form(f), 'ready': self.ready(), 'levels': self.levels(), 'stats': stats,
             'has_lookups': self.has_lookups(), 'total': total,
             'geocoded': int(leaf.get('linked', 0)) + pinned, 'pinned': pinned,
             'manual': int(leaf.get('manual', 0)) + pinned,
             'target': self.table_info('target'), 'ref': self.table_info('ref'),
+            'icr_coverage': self.icr_coverage() if f.get('target_source') == 'icr' else None,
             'boundaries': {lbl: self.boundary_path(lbl).exists() for lbl in self.levels() if lbl != 'leaf'},
             'recent': self.history.recent(2), 'can_undo': self.history.undoable() is not None,
         }
@@ -327,6 +430,13 @@ class Project:
         levels = self.levels()[:-1]
         if label not in levels:
             return None
+        if f.get('boundaries_source') == 'icr':
+            # never falls through to geoBoundaries: the registry's units are the truth
+            ip = self.icr_boundary_path(levels.index(label) + 1)
+            if not ip.exists():
+                return None
+            return {'geojson': json.loads(ip.read_text(encoding='utf-8')), 'name_property': 'name',
+                    'adm': f'ICR admin_level {levels.index(label) + 1}'}
         path = self.boundary_path(label)
         if path.exists():
             info = (f.get('boundary_files') or {}).get(label) or {}
@@ -344,7 +454,7 @@ class Project:
         overlap the community list's values best. Stored in boundary_levels."""
         from match_bot import gazetteer as gz
         f = self.form()
-        if not f.get('country') or f.get('boundaries_source') == 'none':
+        if not f.get('country') or f.get('boundaries_source') in ('none', 'icr'):
             return {}
         iso3 = f['country'].upper()
         tgt = self._target_std_frame()
@@ -596,6 +706,7 @@ class Project:
                 'path': ' › '.join(str(r.get(c, '')) for c in hier),
                 'loc': r['linked_place_name'], 'lat': r['latitude'], 'lon': r['longitude'],
                 'score': r['score'], 'by': r['set_by'], 'match_type': r['match_type'],
+                'icr_lat': r.get('icr_latitude', ''), 'icr_lon': r.get('icr_longitude', ''),
             })
         return rows
 
@@ -625,12 +736,12 @@ class Project:
             for step in args['steps']:
                 self.apply_op(step['op'], step['args'])
             return {'ok': True}
-        return {'ok': False, 'error': f'unknown op {op}'}
+        return {'ok': False, 'error': f'Unknown operation {op}'}
 
     def undo(self) -> Dict:
         entry = self.history.undoable()
         if not entry:
-            return {'ok': False, 'error': 'nothing to undo'}
+            return {'ok': False, 'error': 'Nothing to undo'}
         inv = entry['inverse']
         res = self.apply_op(inv['op'], inv['args'])
         self.history.consume(entry)

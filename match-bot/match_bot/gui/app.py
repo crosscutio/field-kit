@@ -16,6 +16,7 @@ from pathlib import Path
 from flask import Flask, jsonify, render_template, request, send_from_directory, session
 
 from match_bot import gazetteer as gz
+from match_bot import icr_fhir, icr_sdi
 from match_bot.core import links, suggest as sg
 from match_bot.gui.project import ROW_ID, Project
 
@@ -39,7 +40,7 @@ def create_app():
     def project() -> Project:
         if 'sid' not in session:
             session['sid'] = str(uuid.uuid4())
-        return Project(upload_base / session['sid'])
+        return Project(Path(app.config['UPLOAD_BASE']) / session['sid'])
 
     def body():
         return request.get_json(silent=True) or {}
@@ -74,7 +75,8 @@ def create_app():
             data = body()
             allowed = {'project_name', 'target_name_column', 'target_hierarchy', 'ref_name_column',
                        'ref_id_column', 'ref_lat_column', 'ref_lon_column', 'ref_hierarchy',
-                       'boundaries_source', 'country', 'threshold', 'restrict', 'ui', 'ref_source'}
+                       'boundaries_source', 'country', 'threshold', 'restrict', 'ui', 'ref_source',
+                       'target_source'}
             upd = {k: v for k, v in data.items() if k in allowed}
             if 'country' in upd or 'boundaries_source' in upd:
                 upd['boundary_levels'] = {}
@@ -163,7 +165,7 @@ def create_app():
         levels = dict(p.form().get('boundary_levels') or {})
         label, adm = d.get('label', ''), str(d.get('adm', '')).upper()
         if label not in p.levels()[:-1] or adm not in ADM_LEVELS:
-            return fail('label and adm (ADM1..ADM4) required')
+            return fail('A level label and an ADM level (ADM1 to ADM4) are required')
         levels[label] = adm
         p.update_form(boundary_levels=levels, ref_tagged=None)
         return jsonify({'ok': True, **p.state()})
@@ -274,7 +276,7 @@ def create_app():
         rationale = f'manual: picked score={float(score):.0f}' if has_score else 'manual: linked'
         res = p.apply_op('link', {'level': level, 'target_key': tk, 'ref_key': rk, 'rationale': rationale})
         if not res.get('ok'):
-            return fail(res.get('error', 'link failed'))
+            return fail(res.get('error', 'Link failed'))
         if level == 'leaf':
             p.clear_pin(tk)
         prev = res.get('previous')
@@ -298,7 +300,7 @@ def create_app():
         level, tk = d.get('level', 'leaf'), str(d.get('target_key', ''))
         res = p.apply_op('unlink', {'level': level, 'target_key': tk})
         if not res.get('ok'):
-            return fail(res.get('error', 'unlink failed'))
+            return fail(res.get('error', 'Unlink failed'))
         inverse = {'op': 'link', 'args': {'level': level, 'target_key': tk, 'ref_key': res['ref_key'],
                                            'rationale': res.get('rationale') or 'manual: linked'}}
         journal(p, f"unlinked {d.get('target_name', tk)}", inverse)
@@ -310,7 +312,7 @@ def create_app():
         level, tk = d.get('level', 'leaf'), str(d.get('target_key', ''))
         res = p.apply_op('no_equivalent', {'level': level, 'target_key': tk})
         if not res.get('ok'):
-            return fail(res.get('error', 'failed'))
+            return fail(res.get('error', 'The change failed'))
         steps = [{'op': 'clear_no_equivalent', 'args': {'level': level, 'target_key': tk}}]
         prev = res.get('previous')
         if prev and (prev.get('ref_id') or prev.get('ref_key')):
@@ -362,7 +364,7 @@ def create_app():
         try:
             lat, lon = float(d['lat']), float(d['lon'])
         except (KeyError, ValueError, TypeError):
-            return fail('lat/lon required')
+            return fail('Latitude and longitude are required')
         cfg = p.config()
         steps = []
         row = links.unlink(cfg, 'leaf', tid)
@@ -385,7 +387,7 @@ def create_app():
         tid = str(d.get('target_id', ''))
         prev = p.clear_pin(tid)
         if not prev:
-            return fail('no pin for that community')
+            return fail('That community has no pin')
         journal(p, f"removed pin from {d.get('target_name', tid)}",
                 {'op': 'pin', 'args': {'target_id': tid, **prev}})
         return jsonify({'ok': True, **p.state()})
@@ -400,7 +402,7 @@ def create_app():
         p = project()
         res = p.undo()
         if not res.get('ok'):
-            return fail(res.get('error', 'undo failed'))
+            return fail(res.get('error', 'Undo failed'))
         return jsonify({'ok': True, 'undone': res['undone'], **p.state()})
 
     # ---- review / export -------------------------------------------------
@@ -417,8 +419,13 @@ def create_app():
 
     @app.route('/api/download/<path:filepath>')
     def api_download(filepath):
+        """Serve result files only. The session folder also holds
+        form_state.json, which can carry registry credentials."""
         p = project()
-        full = p.sd / filepath
+        out = (p.sd / 'output').resolve()
+        full = (p.sd / filepath).resolve()
+        if out not in full.parents:
+            return fail('Only files under output/ can be downloaded', 403)
         if not full.exists():
             return fail('File not found', 404)
         return send_from_directory(str(full.parent), full.name, as_attachment=True)
@@ -432,7 +439,7 @@ def create_app():
     def api_gaz_admin1():
         iso3 = str(body().get('iso3', '')).upper()
         if not iso3:
-            return fail('iso3 is required')
+            return fail('A country (ISO3 code) is required')
         cached = (gz.gazetteer_dir() / 'data' / 'boundaries' / f'{iso3}_ADM1.geojson').exists()
         try:
             names = gz.admin1_names(iso3)
@@ -445,7 +452,7 @@ def create_app():
         d = body()
         iso3 = str(d.get('iso3', '')).upper()
         if not iso3:
-            return fail('iso3 is required')
+            return fail('A country (ISO3 code) is required')
         try:
             counts = gz.count_geonames_in_selection(iso3, d.get('admin1', []))
         except (gz.GazetteerError, urllib.error.URLError, TimeoutError, OSError) as e:
@@ -457,7 +464,7 @@ def create_app():
         d = body()
         iso3, admin_name = str(d.get('iso3', '')).upper(), d.get('admin1', '')
         if not iso3 or not admin_name:
-            return fail('iso3 and admin1 are required')
+            return fail('A country (ISO3 code) and an admin-1 area are required')
         try:
             shapes = gz.admin1_shapes(iso3, [admin_name])
             geom = shapes[admin_name]
@@ -475,7 +482,7 @@ def create_app():
         iso3 = str(d.get('iso3', '')).upper()
         admin1, skip = d.get('admin1', []), d.get('skip_osm_admins', [])
         if not iso3:
-            return fail('iso3 is required')
+            return fail('A country (ISO3 code) is required')
         p = project()
         log = []
         try:
@@ -494,6 +501,261 @@ def create_app():
                       ref_hierarchy=[], ref_tagged=None, country=iso3)
         log.append(f'{len(gaz_df)} named places written')
         return jsonify({'ok': True, 'log': log, 'count': int(len(gaz_df)), **p.state()})
+
+    # ---- ICR SDI: site list from the registry's published GeoParquet -----
+    def icr_error(e):
+        if isinstance(e, icr_sdi.IcrError):
+            return fail(str(e))
+        return fail(f'Could not reach the registry: {e}', 502)
+
+    def stored_conn(p, key, url_field, d=None):
+        """Connection settings: the request's, falling back to the stored ones.
+        An empty secret with an unchanged mode keeps the stored secret."""
+        stored = dict(p.form().get(key) or {})
+        d = d or {}
+        mode = d.get('auth_mode', stored.get('auth_mode', 'none'))
+        secret = d.get('auth_secret') or ''
+        if not secret and mode == stored.get('auth_mode'):
+            secret = stored.get('auth_secret', '')
+        url = (d.get('url') or stored.get(url_field) or '').strip()
+        return url, mode, secret
+
+    def icr_conn(p, d=None):
+        return stored_conn(p, 'icr', 'catalog_url', d)
+
+    def icr_headers(p):
+        _, mode, secret = icr_conn(p)
+        return icr_sdi.auth_headers(mode, secret)
+
+    def icr_catalog(p):
+        """The catalog read at the last check (cached per session), else re-read."""
+        url = icr_conn(p)[0]
+        cache = p.sd / 'icr_catalog.json'
+        if cache.exists():
+            cat = json.loads(cache.read_text(encoding='utf-8'))
+            if cat.get('_url') == url:
+                return cat
+        cat = icr_sdi.read_catalog(url, icr_headers(p))
+        cache.write_text(json.dumps({**cat, '_url': url}), encoding='utf-8')
+        return cat
+
+    def icr_country(p, code):
+        cat = icr_catalog(p)
+        c = next((c for c in icr_sdi.countries(cat) if c['code'] == code), None)
+        if not c:
+            raise icr_sdi.IcrError(f'Country {code!r} is not in this catalog')
+        return cat, c
+
+    NET = (icr_sdi.IcrError, urllib.error.URLError, TimeoutError, OSError)
+
+    @app.route('/api/icr/catalog', methods=['POST'])
+    def api_icr_catalog():
+        """Check a catalog address + sign-in; remember them on success."""
+        p, d = project(), body()
+        url, mode, secret = icr_conn(p, d)
+        try:
+            cat = icr_sdi.read_catalog(url, icr_sdi.auth_headers(mode, secret))
+        except NET as e:
+            return icr_error(e)
+        (p.sd / 'icr_catalog.json').write_text(json.dumps({**cat, '_url': url}), encoding='utf-8')
+        icr = dict(p.form().get('icr') or {})
+        if icr.get('catalog_url') != url:
+            icr = {}
+        icr.update(catalog_url=url, auth_mode=mode, auth_secret=secret)
+        p.update_form(icr=icr)
+        ctry = [{k: c[k] for k in ('code', 'name', 'admin_units')} | {'types': sorted(c['types'])}
+                for c in icr_sdi.countries(cat)]
+        return jsonify({'ok': True, 'catalog': {k: cat[k] for k in ('title', 'providers', 'license', 'updated')},
+                        'files': len(cat['items']), 'countries': ctry, **p.state()})
+
+    @app.route('/api/icr/options', methods=['POST'])
+    def api_icr_options():
+        """Types published for a country (counts on record / without
+        coordinates) and its admin tree; with ``type``, per-unit site counts."""
+        p, d = project(), body()
+        code, typ = d.get('country', ''), d.get('type')
+        try:
+            cat, c = icr_country(p, code)
+            conn = icr_sdi.duck(icr_headers(p))
+            types = {}
+            for t in icr_sdi.SITE_TYPES:
+                if t in c['types']:
+                    types[t] = {'published': True, **icr_sdi.type_summary(conn, c['types'][t]['href'])}
+                else:
+                    types[t] = {'published': False}
+            units = icr_sdi.admin_units(conn, c['admin_href']) if c['admin_href'] else []
+            counts = icr_sdi.site_counts(conn, c['types'][typ]['href']) if typ in c['types'] else {}
+        except NET as e:
+            return icr_error(e)
+        icr = dict(p.form().get('icr') or {})
+        icr.update(country=code, **({'type': typ} if typ else {}))
+        p.update_form(icr=icr)
+        return jsonify({'ok': True, 'country': {'code': c['code'], 'name': c['name']}, 'types': types,
+                        'tree': icr_sdi.admin_tree(units, counts), **p.state()})
+
+    @app.route('/api/icr/import/boundaries', methods=['POST'])
+    def api_icr_import_boundaries():
+        """Step 1 of the import: the country's admin units become the boundaries."""
+        p, d = project(), body()
+        code = d.get('country', '')
+        try:
+            cat, c = icr_country(p, code)
+            if not c['admin_href']:
+                raise icr_sdi.IcrError(f'{c["name"]} has no admin units in this catalog')
+            conn = icr_sdi.duck(icr_headers(p))
+            units = icr_sdi.admin_units(conn, c['admin_href'])
+            gj = {lvl: icr_sdi.boundaries_geojson(units, lvl) for lvl in (1, 2)}
+        except NET as e:
+            return icr_error(e)
+        counts = p.save_icr_boundaries(gj, code)
+        log = [f'Read type=admin-unit · {len(units)} admin units',
+               f'Boundaries · {counts[1]} at level 1, {counts[2]} at level 2']
+        return jsonify({'ok': True, 'log': log, **p.state()})
+
+    @app.route('/api/icr/import/sites', methods=['POST'])
+    def api_icr_import_sites():
+        """Step 2 of the import: the site rows in scope become target.csv."""
+        p, d = project(), body()
+        code, typ = d.get('country', ''), d.get('type', '')
+        status = 'active' if d.get('status', 'active') == 'active' else 'all'
+        unit_ids = d.get('units') or None
+        try:
+            cat, c = icr_country(p, code)
+            if typ not in c['types']:
+                raise icr_sdi.IcrError(f'No {typ} file for {c["name"]} in this catalog')
+            part = c['types'][typ]
+            conn = icr_sdi.duck(icr_headers(p))
+            rows = icr_sdi.read_sites(conn, part['href'], status, unit_ids)
+        except NET as e:
+            return icr_error(e)
+        if not rows:
+            return fail('No sites match this query')
+        p.save_icr_sites(rows, f'{c["name"]} {typ}s · ICR')
+        icr = dict(p.form().get('icr') or {})
+        icr.update(country=code, type=typ, status=status, units=unit_ids or [],
+                   snapshot={'href': part['href'], 'datetime': part['datetime'], 'checksum': part['checksum']})
+        p.update_form(icr=icr)
+        cov = p.icr_coverage()
+        log = [f'Read country={code}/geom_type=point/type={typ} · {len(rows)} rows kept',
+               f'{cov["with_coords"]} already have coordinates · {cov["missing"]} need a location',
+               'Written to target.csv · source=icr']
+        return jsonify({'ok': True, 'log': log, **p.state()})
+
+    # ---- ICR FHIR: named places from campaign form responses -------------
+    def fhir_conn(p, d=None):
+        url, mode, secret = stored_conn(p, 'fhir', 'base_url', d)
+        return url.rstrip('/'), icr_sdi.auth_headers(mode, secret), mode, secret
+
+    def session_json(p, name, value=None):
+        path = p.sd / name
+        if value is not None:
+            path.write_text(json.dumps(value), encoding='utf-8')
+            return value
+        return json.loads(path.read_text(encoding='utf-8')) if path.exists() else None
+
+    @app.route('/api/fhir/connect', methods=['POST'])
+    def api_fhir_connect():
+        p, d = project(), body()
+        try:
+            base, headers, mode, secret = fhir_conn(p, d)
+            cap = icr_fhir.capability(base, headers)
+        except NET as e:
+            return icr_error(e)
+        fh = dict(p.form().get('fhir') or {})
+        if fh.get('base_url') != base:
+            fh = {}
+        fh.update(base_url=base, auth_mode=mode, auth_secret=secret)
+        p.update_form(fhir=fh)
+        return jsonify({'ok': True, 'server': cap, **p.state()})
+
+    @app.route('/api/fhir/forms', methods=['POST'])
+    def api_fhir_forms():
+        """Every Questionnaire on the server, its questions and response count."""
+        p = project()
+        try:
+            base, headers, _, _ = fhir_conn(p)
+            forms = icr_fhir.questionnaires(base, headers)
+        except NET as e:
+            return icr_error(e)
+        session_json(p, 'fhir_forms.json', {'base': base, 'forms': forms})
+        return jsonify({'ok': True, 'forms': forms})
+
+    @app.route('/api/fhir/scan', methods=['POST'])
+    def api_fhir_scan():
+        """Subjects, campaigns and statuses of the chosen forms' responses."""
+        p, d = project(), body()
+        forms = sorted(d.get('forms') or [])
+        if not forms:
+            return fail('Pick at least one questionnaire')
+        cached = session_json(p, 'fhir_scan.json')
+        base = fhir_conn(p)[0]
+        if cached and cached.get('base') == base and cached.get('forms') == forms:
+            return jsonify({'ok': True, **cached['scan']})
+        try:
+            res = icr_fhir.scan(base, fhir_conn(p)[1], forms)
+        except NET as e:
+            return icr_error(e)
+        session_json(p, 'fhir_scan.json', {'base': base, 'forms': forms, 'scan': res})
+        return jsonify({'ok': True, **res})
+
+    @app.route('/api/fhir/pull', methods=['POST'])
+    def api_fhir_pull():
+        """Pull the selected responses and write them as the named places."""
+        p, d = project(), body()
+        sel = {k: d.get(k) or [] for k in ('forms', 'subjects', 'campaigns', 'statuses')}
+        mapping = {u: m for u, m in (d.get('mapping') or {}).items()
+                   if u in sel['forms'] and all((m or {}).get(k) for k in ('name', 'lat', 'lon'))}
+        if set(mapping) != set(sel['forms']):
+            return fail('Choose the name, latitude and longitude answers for every questionnaire, or remove it')
+        cache = session_json(p, 'fhir_forms.json') or {}
+        titles = {f['url']: f['title'] for f in cache.get('forms', [])}
+        try:
+            base, headers, _, _ = fhir_conn(p)
+            res = icr_fhir.pull(base, headers, sel, mapping, titles)
+        except NET as e:
+            return icr_error(e)
+        if not res['places']:
+            return fail(f"None of the {res['read']} responses had a name and a GPS point in the chosen answers")
+        import pandas as pd
+        df = pd.DataFrame(res['places'])
+        p._write_table('ref', df, f"{len(sel['forms'])} ICR form{'s' if len(sel['forms']) != 1 else ''}")
+        p.update_form(ref_source='icr-forms', ref_id_column='point_id', ref_name_column='name',
+                      ref_lat_column='latitude', ref_lon_column='longitude', ref_hierarchy=[], ref_tagged=None)
+        fh = dict(p.form().get('fhir') or {})
+        fh.update(sel, mapping=mapping)
+        p.update_form(fhir=fh)
+        log = [f"Read {res['read']} responses", f"Skipped {res['skipped']} with no name or GPS answer",
+               f"Pooled {res['pooled']} repeat visits → {len(res['places'])} named places",
+               'Written to ref.csv · source=icr-forms']
+        return jsonify({'ok': True, 'log': log, 'read': res['read'], 'skipped': res['skipped'],
+                        'pooled': res['pooled'], 'count': len(res['places']),
+                        'preview': res['places'][:12], **p.state()})
+
+    @app.route('/api/icr/records', methods=['POST'])
+    def api_icr_records():
+        """Choose which imported records become the site list."""
+        p = project()
+        try:
+            p.choose_icr_records(body().get('keep', ''))
+        except ValueError as e:
+            return fail(str(e))
+        return jsonify({'ok': True, **p.state()})
+
+    @app.route('/api/icr/preview')
+    def api_icr_preview():
+        """Imported registry rows for the preview, filtered by coordinate presence."""
+        p = project()
+        flt = request.args.get('filter', 'all')
+        limit = min(int(request.args.get('limit', 40)), 500)
+        import pandas as pd
+        df = pd.read_csv(p.target_path, dtype=str).fillna('') if p.target_path.exists() else pd.DataFrame()
+        if df.empty or 'icr_latitude' not in df.columns:
+            return jsonify({'ok': True, 'rows': [], 'matching': 0})
+        has = (df['icr_latitude'] != '') & (df['icr_longitude'] != '')
+        sel = df[has] if flt == 'coords' else df[~has] if flt == 'none' else df
+        cols = [c for c in p.ICR_TARGET_COLUMNS if c in sel.columns]
+        return jsonify({'ok': True, 'matching': int(len(sel)),
+                        'rows': sel[cols].head(limit).to_dict(orient='records')})
 
     return app
 

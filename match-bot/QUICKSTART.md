@@ -91,6 +91,31 @@ Filter by how each row was set, then **Export csv** to download
 `geocoded.csv`: your original columns plus the linked place, coordinates,
 score and who set it.
 
+## Importing from an Integrated Campaign Registry (ICR)
+
+Needs DuckDB: `pip install -e ".[all]"` installs it (the `icr` extra). The
+first import downloads DuckDB's `httpfs` extension once.
+
+**Site list from the registry's SDI.** In *Your community list* choose
+**Import from the ICR**, enter the catalog address (example:
+`https://sdi.healthcampaigns.org/catalog.json`) and a sign-in if your
+registry needs one, then **Check this catalog**. Pick the country, the kind of
+site (settlements, health facilities, schools), the admin units you cover and
+whether to include retired sites, then **Import these locations**. Then choose
+which records to geocode: all of them, only those that already have
+coordinates, or only those that need coordinates (records with coordinates
+are overwritten if you import them). The registry's admin units become the
+boundaries for named places automatically. The export keeps the registry
+point (`icr_latitude`/`icr_longitude`) beside Match Bot's.
+
+**Named places from form responses.** In *Named places* choose **Pull form
+responses from the ICR**, connect to the registry's FHIR server (example:
+`https://hapi.healthcampaigns.org/fhir`), then pick the questionnaires to
+include and what they were about. For each questionnaire choose the questions
+that hold the place name, latitude and longitude — a questionnaire's own
+extraction template pre-fills these when it has one — or remove it. **Pull these
+responses** writes one named place per distinct point.
+
 ## Where things are saved
 
 Uploads, lookup tables, pins and the action history live in

@@ -14,6 +14,7 @@ GUI never scores a name itself.
 | Web server | Flask 3 | one process, JSON API, per-browser session directory |
 | Front end | Vanilla JavaScript, HTML, CSS; Leaflet 1.9 | no build step, no framework; OpenStreetMap tiles (greyscale filter) |
 | External data | GeoNames, geoBoundaries, OpenStreetMap (Overpass) | fetched on demand and cached under `gazetteer/data/` |
+| Registry (ICR) | STAC catalog + GeoParquet read in place by DuckDB ≥1.5 (`httpfs`); FHIR R4 over urllib | site list from the SDI kiln publishes; named places from campaign form responses; optional sign-in (token, basic, custom header) |
 | Tests | pytest, Flask test client | fixture project with deliberate typos; Playwright driver used for visual checks |
 
 Everything runs locally. The browser only needs the local server plus CDN
@@ -53,6 +54,8 @@ flowchart LR
   end
 
   GAZ[gazetteer.py<br/>GeoNames + Overpass + geoBoundaries]
+  SDI[icr_sdi.py<br/>STAC catalog + GeoParquet via DuckDB]
+  FHIR[icr_fhir.py<br/>Questionnaires + responses over FHIR]
 
   JS -- fetch /api/* --> APP
   PROJ --> GEN
@@ -61,6 +64,9 @@ flowchart LR
   PROJ --> EXP
   PROJ --> GAZ
   APP --> GAZ
+  APP --> SDI
+  APP --> FHIR
+  FHIR --> SDI
 ```
 
 **Responsibilities**
@@ -74,6 +80,16 @@ flowchart LR
 - `project.py` owns one session directory: uploads, form state, the
   `MatcherConfig` it builds for the engine, per-level statistics, candidate
   lookups, pins, histogram, review rows.
+- `icr_sdi.py` walks an ICR SDI's STAC catalog to the partitioned location
+  collection and queries its GeoParquet files in place with DuckDB, so a
+  scoped import reads only the columns and row groups it needs. Missing
+  coordinates are `position_latitude IS NULL` (kiln fills `lat`/`lon` even
+  without a position). The collection's `table:column_statistics` are ignored —
+  kiln writes them misaligned.
+- `icr_fhir.py` reads Questionnaires and `ICRCampaignFormResponse`s
+  (QuestionnaireResponse: `questionnaire` = form, `subject`, `basedOn` =
+  campaign). linkIds differ per form, so the user maps name / lat / lon per
+  form; the only pre-fill is a form's own SDC `templateExtractValue` template.
 - `core/*` is the engine. `suggest.py`, `links.py` and `export.py` were
   extracted from the CLI so the GUI and the command line share one code path.
 
@@ -82,11 +98,17 @@ flowchart LR
 One directory per browser session under `match_bot/gui/instance/uploads/<sid>/`:
 
 ```
-target.csv                community list (+ _row_id)
-ref.csv                   named places as uploaded or built
+target.csv                community list (+ _row_id); from the ICR: point_id, name, status,
+                          admin1/2_name + _code, icr_latitude/icr_longitude
+ref.csv                   named places as uploaded, built, or pulled from form responses
+                          (point_id = qr:<response id>, source = icr-forms)
 ref_tagged.csv            places + adm_<level> columns from the boundaries  ← what the engine reads
 boundaries_<level>.geojson   user-uploaded polygons (geoBoundaries files live in gazetteer/data/)
-form_state.json           column mapping, boundary choices, threshold, ui snapshot
+icr_admin_<n>.geojson     ICR admin units at admin_level n (boundaries_source = icr)
+icr_catalog.json, fhir_forms.json, fhir_scan.json   per-session registry caches
+form_state.json           column mapping, boundary choices, threshold, ui snapshot;
+                          icr / fhir connection + query, including any sign-in secret
+                          (never sent back to the browser; /api/download serves output/ only)
 output/lookups/<level>_lookup.csv   admin-name crosswalk per level
 output/lookups/leaf_lookup.csv      one row per community + one per unused place
 output/manual_geocode.csv           dropped pins (target_id, latitude, longitude)
@@ -175,6 +197,16 @@ flowchart LR
 The same polygon names feed the engine, the stage 2 map and the stage 4
 outline, so the highlighted area is always exactly the candidate pool.
 
+When the site list comes from the ICR, its own `type=admin-unit` polygons are
+written at import (`icr_admin_1.geojson`, `icr_admin_2.geojson`) and
+`boundaries_source` is `icr`: named places are tagged with the registry's
+admin units, so their names match the imported `admin1_name`/`admin2_name`
+exactly. That source never falls back to geoBoundaries.
+
+ICR sites that already carry a point still go through stages 2-4; the
+registry point travels as `icr_latitude`/`icr_longitude` beside Match Bot's
+`latitude`/`longitude` in review and in `geocoded.csv`.
+
 ## Undo model
 
 Every mutating route appends `{time, text, inverse}` to `history.jsonl`.
@@ -199,6 +231,8 @@ files from the lookups, which already preserve every manual decision.
 | `POST /api/undo`, `GET /api/history` | journal |
 | `GET /api/review`, `GET /api/download/<path>` | export |
 | `/api/gazetteer/*` | build named places from GeoNames + OSM |
+| `POST /api/icr/catalog`, `/options`, `/import/boundaries`, `/import/sites`; `GET /api/icr/preview` | site list from an ICR SDI |
+| `POST /api/fhir/connect`, `/forms`, `/scan`, `/pull` | named places from ICR form responses |
 
 ## Testing
 
@@ -210,5 +244,11 @@ files from the lookups, which already preserve every manual decision.
 - The CLI regression is the CIV example: `lookups` → `suggest --level region
   --apply` → `lookups` → `suggest --level district --apply` → `lookups` must
   still report 457, 557 and 608 matches.
+- `test_icr_sdi.py` / `test_icr_api.py` build a miniature SDI on disk
+  (`tests/icr_fixtures.py`: STAC JSON + kiln-shaped GeoParquet written by
+  DuckDB, read through `file://` URLs) and run the import through matching
+  and export. `test_icr_fhir.py` answers the client's real requests from a
+  fake FHIR server (paging, `_include`, SDC templates, ODK geopoints).
+  `test_icr_live.py` (`-m network`) checks the public example SDI and server.
 - A Playwright script walks the real page with the CIV files and screenshots
   each stage for visual review.
