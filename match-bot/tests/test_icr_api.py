@@ -34,6 +34,7 @@ def test_import_match_and_export(client, catalog, tmp_path):
     assert 'auth_secret' not in d['form']['icr'] and d['form']['icr']['auth_secret_set'] is True
     d = ok(client.post('/api/icr/options', json={'country': 'TST', 'type': 'settlement'}))
     assert d['types']['settlement'] == {'published': True, 'total': 5, 'missing': 2, 'active': 4}
+    assert d['types']['facility'] == {'published': True, 'total': 2, 'missing': 2, 'active': 1}
     assert d['types']['school'] == {'published': False}
 
     d = ok(client.post('/api/icr/import/boundaries', json={'country': 'TST'}))
@@ -49,7 +50,8 @@ def test_import_match_and_export(client, catalog, tmp_path):
     assert d['target']['rows'] == 3
     assert d['form']['target_source'] == 'icr' and d['form']['target_name_column'] == 'name'
     assert [h['column'] for h in d['form']['target_hierarchy']] == ['admin1_name', 'admin2_name']
-    assert d['form']['icr']['snapshot']['checksum'] == 'abc123'
+    snap = d['form']['icr']['snapshot']
+    assert [f['checksum'] for f in snap['parts']] == ['abc123', 'abc123'] and snap['datetime'].startswith('2026')
 
     prev = ok(client.get('/api/icr/preview?filter=none'))
     assert prev['matching'] == 1 and prev['rows'][0]['name'] == 'Gidan'

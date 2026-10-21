@@ -16,8 +16,12 @@ def test_sdi_catalog_and_scoped_read():
     con = icr_sdi.duck()
     units = icr_sdi.admin_units(con, nga['admin_href'])
     takai = next(u for u in units if u['name'] == 'Takai' and u['admin_level'] == 2)
-    rows = icr_sdi.read_sites(con, nga['types']['settlement']['href'], 'active', [takai['id']])
+    rows = icr_sdi.read_sites(con, icr_sdi.site_hrefs(nga['types']['settlement']), 'active', [takai['id']])
     assert rows and all(r['admin2_name'] == 'Takai' for r in rows)
+    # facilities without coordinates are published in a geom_type=null file and must be read
+    fac = nga['types']['facility']
+    assert 'null' in [p['geom_type'] for p in fac['parts']]
+    assert icr_sdi.type_summary(con, icr_sdi.site_hrefs(fac))['missing'] > 0
 
 
 def test_fhir_forms():

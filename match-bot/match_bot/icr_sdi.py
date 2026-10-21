@@ -5,6 +5,9 @@ Layout (kiln + Portolan):
 ``catalog.json`` → child catalogs → a Collection whose ``partition:keys`` are
 ``country / geom_type / type``, with one ``rel:item`` per partition file
 (``.../country=NGA/geom_type=point/type=settlement/part-0.parquet``).
+A site type is split by geometry: rows with a position are in
+``geom_type=point``, rows without one in ``geom_type=null`` — and those are the
+rows this tool exists to locate, so every site read spans both files.
 Admin units are ``type=admin-unit`` polygons; every other row carries its
 admin ancestry denormalised (``admin1_name``/``admin1_code``, ``ancestor_ids``).
 
@@ -23,6 +26,7 @@ import urllib.request
 USER_AGENT = 'match-bot-icr/1.0 (https://github.com/crosscut/field-kit)'
 AUTH_MODES = ('none', 'bearer', 'basic', 'header')
 SITE_TYPES = ('settlement', 'facility', 'school')
+SITE_GEOMS = ('point', 'null')  # with a position / without one
 
 
 class IcrError(Exception):
@@ -156,10 +160,19 @@ def countries(catalog):
         if it['type'] == 'admin-unit':
             c['admin_units'] = it['count'] or 0
             c['admin_href'] = it['href']
-        elif it['geom_type'] == 'point' and it['type'] in SITE_TYPES:
-            c['types'][it['type']] = {'count': it['count'], 'href': it['href'],
-                                      'datetime': it['datetime'], 'checksum': it['checksum']}
+        elif it['geom_type'] in SITE_GEOMS and it['type'] in SITE_TYPES:
+            t = c['types'].setdefault(it['type'], {'count': 0, 'parts': []})
+            t['count'] += it['count'] or 0
+            t['parts'].append({k: it[k] for k in ('geom_type', 'href', 'datetime', 'checksum', 'count')})
+    for c in out.values():
+        for t in c['types'].values():
+            t['parts'].sort(key=lambda p: SITE_GEOMS.index(p['geom_type']))
     return sorted(out.values(), key=lambda c: c['name'])
+
+
+def site_hrefs(type_entry):
+    """Every file of one site type (point and null), for the readers below."""
+    return [p['href'] for p in type_entry['parts']]
 
 
 # ---- DuckDB ---------------------------------------------------------------
@@ -168,11 +181,18 @@ def _sql_str(s):
     return "'" + str(s).replace("'", "''") + "'"
 
 
-def _src(href):
-    """read_parquet() argument: local path for file:// URLs, else the URL."""
+def _path(href):
+    """Local path for file:// URLs, else the URL."""
     if href.startswith('file://'):
         return _sql_str(urllib.request.url2pathname(urllib.parse.urlparse(href).path))
     return _sql_str(href)
+
+
+def _src(href):
+    """read_parquet() arguments for one file or a list of files (union by name)."""
+    if isinstance(href, str):
+        return _path(href)
+    return '[' + ', '.join(_path(h) for h in href) + '], union_by_name = true'
 
 
 def duck(headers=None):
@@ -232,28 +252,28 @@ def admin_tree(units, site_counts=None):
     return sorted(top.values(), key=lambda n: n['name'] or '')
 
 
-def site_counts(conn, href):
+def site_counts(conn, hrefs):
     """{admin unit id: {sites, missing}} — missing = no position yet."""
     rows = _query(conn, f'''
         SELECT a AS id, count(*) AS sites,
                count(*) FILTER (WHERE position_latitude IS NULL OR position_longitude IS NULL) AS missing
         FROM (SELECT unnest(ancestor_ids) AS a, position_latitude, position_longitude
-              FROM read_parquet({_src(href)}))
+              FROM read_parquet({_src(hrefs)}))
         GROUP BY a''')
     return {r['id']: {'sites': int(r['sites']), 'missing': int(r['missing'])} for r in rows}
 
 
-def type_summary(conn, href):
-    """Rows on record and rows without coordinates for one site partition."""
+def type_summary(conn, hrefs):
+    """Rows on record and rows without coordinates for one site type."""
     r = _query(conn, f'''
         SELECT count(*) AS total,
                count(*) FILTER (WHERE position_latitude IS NULL OR position_longitude IS NULL) AS missing,
                count(*) FILTER (WHERE status = 'active') AS active
-        FROM read_parquet({_src(href)})''')[0]
+        FROM read_parquet({_src(hrefs)})''')[0]
     return {k: int(v or 0) for k, v in r.items()}
 
 
-def read_sites(conn, href, status='active', unit_ids=None):
+def read_sites(conn, hrefs, status='active', unit_ids=None):
     """Site rows in scope. ``unit_ids`` are admin-unit ids at any level (matched
     against each row's ancestors); None means the whole country."""
     where, params = [], []
@@ -266,7 +286,7 @@ def read_sites(conn, href, status='active', unit_ids=None):
     return _query(conn, f'''
         SELECT id, name, status, admin1_name, admin1_code, admin2_name, admin2_code,
                position_latitude, position_longitude
-        FROM read_parquet({_src(href)}) {clause}
+        FROM read_parquet({_src(hrefs)}) {clause}
         ORDER BY admin1_name, admin2_name, name''', params)
 
 

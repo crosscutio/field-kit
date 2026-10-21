@@ -47,9 +47,23 @@ def test_headers_reach_every_json_request(monkeypatch):
 def test_catalog_walk(sdi):
     cat, ctry, _ = sdi
     assert cat['title'] == 'Test ICR' and cat['license'] == 'CC-BY-4.0'
-    assert {(i['geom_type'], i['type']) for i in cat['items']} == {('polygon', 'admin-unit'), ('point', 'settlement')}
+    assert {(i['geom_type'], i['type']) for i in cat['items']} == {
+        ('polygon', 'admin-unit'), ('point', 'settlement'), ('null', 'settlement'), ('null', 'facility')}
     assert ctry['code'] == 'TST' and ctry['name'] == 'Testland'
-    assert list(ctry['types']) == ['settlement'] and ctry['admin_units'] == 6
+    assert sorted(ctry['types']) == ['facility', 'settlement'] and ctry['admin_units'] == 6
+    # a type spans its point and null files; the null file holds the sites to locate
+    st = ctry['types']['settlement']
+    assert [p['geom_type'] for p in st['parts']] == ['point', 'null'] and st['count'] == 5
+    assert [p['geom_type'] for p in ctry['types']['facility']['parts']] == ['null']
+
+
+def test_sites_without_coordinates_are_read(sdi):
+    _, ctry, con = sdi
+    fac = icr_sdi.site_hrefs(ctry['types']['facility'])
+    assert icr_sdi.type_summary(con, fac) == {'total': 2, 'missing': 2, 'active': 1}
+    assert icr_sdi.site_counts(con, fac)['tst-su'] == {'sites': 2, 'missing': 2}
+    rows = icr_sdi.read_sites(con, fac, 'active')
+    assert [r['name'] for r in rows] == ['Gamma Clinic'] and rows[0]['position_latitude'] is None
 
 
 def test_not_a_catalog(tmp_path):
@@ -62,20 +76,20 @@ def test_not_a_catalog(tmp_path):
 def test_admin_tree_and_counts(sdi):
     _, ctry, con = sdi
     units = icr_sdi.admin_units(con, ctry['admin_href'])
-    counts = icr_sdi.site_counts(con, ctry['types']['settlement']['href'])
+    counts = icr_sdi.site_counts(con, icr_sdi.site_hrefs(ctry['types']['settlement']))
     tree = icr_sdi.admin_tree(units, counts)
     assert [n['name'] for n in tree] == ['Nord', 'Sud']
     nord = tree[0]
     assert nord['sites'] == 4 and nord['missing'] == 1
     assert [c['name'] for c in nord['children']] == ['Alpha', 'Beta']
-    summary = icr_sdi.type_summary(con, ctry['types']['settlement']['href'])
+    summary = icr_sdi.type_summary(con, icr_sdi.site_hrefs(ctry['types']['settlement']))
     # missing comes from position_*, never from kiln's always-filled lat/lon
     assert summary == {'total': 5, 'missing': 2, 'active': 4}
 
 
 def test_read_sites_scope_and_status(sdi):
     _, ctry, con = sdi
-    href = ctry['types']['settlement']['href']
+    href = icr_sdi.site_hrefs(ctry['types']['settlement'])
     assert len(icr_sdi.read_sites(con, href, 'all')) == 5
     active = icr_sdi.read_sites(con, href, 'active')
     assert 'Old Rimi' not in {r['name'] for r in active} and len(active) == 4

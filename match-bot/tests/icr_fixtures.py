@@ -26,6 +26,11 @@ SITES = [
     ('Old Rimi', 'tst-no-102', 1.3, 1.6, 'inactive'),
     ('Dawa', 'tst-su-201', None, None, 'active'),
 ]
+# facilities, published only without coordinates (no point file for this type)
+FACILITIES = [
+    ('Gamma Clinic', 'tst-su-201', 'active'),
+    ('Old Gamma Post', 'tst-su-201', 'inactive'),
+]
 
 
 def _write_parquet(df, path):
@@ -43,22 +48,27 @@ def build_sdi(root: Path) -> str:
         'id': u[0], 'name': u[1], 'pcode': u[2], 'admin_level': u[3], 'part_of': u[4],
         'type': 'admin-unit', 'status': 'active', 'geometry': shapely.to_wkb(u[5]),
     } for u in UNITS])
-    rows = []
-    for i, (name, dist, lat, lon, status) in enumerate(SITES):
+    def site(i, name, typ, dist, lat, lon, status):
         d = unit[dist]
         r = unit[d[4]]
-        rows.append({
-            'id': f'site-{i + 1}', 'name': name, 'status': status, 'type': 'settlement',
+        return {
+            'id': f'{typ}-{i + 1}', 'name': name, 'status': status, 'type': typ,
             'part_of': dist, 'ancestor_ids': ['tst', r[0], dist],
             'admin1_name': r[1], 'admin1_code': r[2], 'admin2_name': d[1], 'admin2_code': d[2],
             'position_latitude': lat, 'position_longitude': lon,
             # kiln fills lat/lon even without a position; the reader must not use them
             'lat': lat if lat is not None else 1.0, 'lon': lon if lon is not None else 1.0,
-            'geometry': shapely.to_wkb(Point(lon if lon is not None else 1.0, lat if lat is not None else 1.0)),
-        })
+            'geometry': shapely.to_wkb(Point(lon, lat)) if lat is not None else None,
+        }
+
+    rows = [site(i, n, 'settlement', d, lat, lon, st) for i, (n, d, lat, lon, st) in enumerate(SITES)]
+    facs = [site(i, n, 'facility', d, None, None, st) for i, (n, d, st) in enumerate(FACILITIES)]
+    # kiln splits each site type by geometry: located rows → point, the rest → null
     parts = {
         ('polygon', 'admin-unit'): admin,
-        ('point', 'settlement'): pd.DataFrame(rows),
+        ('point', 'settlement'): pd.DataFrame([r for r in rows if r['position_latitude'] is not None]),
+        ('null', 'settlement'): pd.DataFrame([r for r in rows if r['position_latitude'] is None]),
+        ('null', 'facility'): pd.DataFrame(facs),
     }
     links = []
     for (geom, typ), df in parts.items():

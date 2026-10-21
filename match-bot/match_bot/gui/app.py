@@ -580,11 +580,11 @@ def create_app():
             types = {}
             for t in icr_sdi.SITE_TYPES:
                 if t in c['types']:
-                    types[t] = {'published': True, **icr_sdi.type_summary(conn, c['types'][t]['href'])}
+                    types[t] = {'published': True, **icr_sdi.type_summary(conn, icr_sdi.site_hrefs(c['types'][t]))}
                 else:
                     types[t] = {'published': False}
             units = icr_sdi.admin_units(conn, c['admin_href']) if c['admin_href'] else []
-            counts = icr_sdi.site_counts(conn, c['types'][typ]['href']) if typ in c['types'] else {}
+            counts = icr_sdi.site_counts(conn, icr_sdi.site_hrefs(c['types'][typ])) if typ in c['types'] else {}
         except NET as e:
             return icr_error(e)
         icr = dict(p.form().get('icr') or {})
@@ -625,7 +625,7 @@ def create_app():
                 raise icr_sdi.IcrError(f'No {typ} file for {c["name"]} in this catalog')
             part = c['types'][typ]
             conn = icr_sdi.duck(icr_headers(p))
-            rows = icr_sdi.read_sites(conn, part['href'], status, unit_ids)
+            rows = icr_sdi.read_sites(conn, icr_sdi.site_hrefs(part), status, unit_ids)
         except NET as e:
             return icr_error(e)
         if not rows:
@@ -633,10 +633,12 @@ def create_app():
         p.save_icr_sites(rows, f'{c["name"]} {typ}s · ICR')
         icr = dict(p.form().get('icr') or {})
         icr.update(country=code, type=typ, status=status, units=unit_ids or [],
-                   snapshot={'href': part['href'], 'datetime': part['datetime'], 'checksum': part['checksum']})
+                   snapshot={'datetime': max((f['datetime'] or '' for f in part['parts']), default=''),
+                             'parts': [{k: f[k] for k in ('href', 'datetime', 'checksum')} for f in part['parts']]})
         p.update_form(icr=icr)
         cov = p.icr_coverage()
-        log = [f'Read country={code}/geom_type=point/type={typ} · {len(rows)} rows kept',
+        geoms = ','.join(f['geom_type'] for f in part['parts'])
+        log = [f'Read country={code}/geom_type={{{geoms}}}/type={typ} · {len(rows)} rows kept',
                f'{cov["with_coords"]} already have coordinates · {cov["missing"]} need a location',
                'Written to target.csv · source=icr']
         return jsonify({'ok': True, 'log': log, **p.state()})
