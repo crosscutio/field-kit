@@ -2,9 +2,10 @@
 
 Everything here returns data; ``scripts/suggest_matches`` wraps it for the
 CLI. Scores are rapidfuzz 0-100 (max of ``ratio`` and ``token_set_ratio``)
-with standalone digit tokens stripped first, because shared trailing numbers
-("Ward 2" vs "Zone 2") otherwise manufacture high scores between unrelated
-names.
+over the name's base words only (see ``names.parse_name``), so a shared
+trailing number ("Ward 2" vs "Zone 2") can't manufacture a high score. Numbers
+are a hard gate instead: names whose numbers differ, or where only one side is
+numbered, score 0 ("Ofutop 1" vs "Ofutop 2", "Old Netim I" vs "Old Netim").
 
 Keys:
     leaf level      target_key = target_id, ref_key = ref_id
@@ -20,8 +21,8 @@ from typing import Callable, Dict, List, Optional
 import pandas as pd
 
 from .lookup import load_lookup, norm_id
+from .names import numbers_compatible, parse_name
 
-_NUM_TOKEN = re.compile(r'\b\d+\b')
 _SCORE_RE = re.compile(r'score\s*=\s*(\d+)')
 
 AUTO_SUGGEST_PREFIX = 'auto: suggest'
@@ -35,16 +36,19 @@ def _fuzz():
     return fuzz
 
 
-def _clean(s) -> str:
-    if s is None or (isinstance(s, float) and pd.isna(s)):
-        return ''
-    return ' '.join(_NUM_TOKEN.sub(' ', str(s).lower()).split())
-
-
 def score_pair(a, b) -> float:
-    """Fuzzy score in [0, 100] between two names."""
+    """Fuzzy score in [0, 100] between two names; 0 when their numbers clash."""
     fuzz = _fuzz()
-    a, b = _clean(a), _clean(b)
+    pa, pb = parse_name(a), parse_name(b)
+    if not numbers_compatible(pa, pb):
+        return 0.0
+    if pa.numbers:
+        a, b = pa.base, pb.base
+    else:
+        # Unnumbered names keep their punctuation: stripping it would let
+        # token_set_ratio score "Akugom" 100 against "Lekpankom/ Akugom/ Kotani".
+        a, b = (' '.join(str(s).lower().split()) if s is not None and s == s else ''
+                for s in (a, b))
     if not a or not b:
         return 0.0
     return float(max(fuzz.ratio(a, b), fuzz.token_set_ratio(a, b)))

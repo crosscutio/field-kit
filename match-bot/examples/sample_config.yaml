@@ -50,7 +50,7 @@ standardization:
 matching:
   levenshtein_distance_threshold: 1  # Step 2: accept if edit distance ≤ this
   levenshtein_score_threshold: 0.25  # Step 3: accept if distance/length < this
-  validate_numbers: true             # Reject "Village 1" ↔ "Village 2"
+  validate_numbers: true             # Numbers must agree: "Village 1" ✗ "Village 2", "Village 1" ✗ "Village", "Village 2" ✓ "Village II"
 
 # ──────────────────────────────────────────────
 # Output paths (relative to this config file)

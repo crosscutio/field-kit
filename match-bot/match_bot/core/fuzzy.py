@@ -11,6 +11,8 @@ from typing import List, Optional
 import numpy as np
 import pandas as pd
 
+from .names import numbers_compatible
+
 # Optional dependencies - checked at runtime when needed
 jellyfish = None
 linear_sum_assignment = None
@@ -92,17 +94,11 @@ def compute_levenshtein_score(df: pd.DataFrame, distance_col: str = 'levenshtein
 def validate_number_match(df: pd.DataFrame,
                           source_col: str = 'name',
                           match_col: str = 'closest_levenshtein_match') -> pd.DataFrame:
-    """Filter matches to ensure numeric portions of names match."""
-    result = df.copy()
-    result['_source_numbers'] = (
-        result[source_col].str.extract(r'(\d+)', expand=False).fillna('_NO_NUMBER_')
-    )
-    result['_match_numbers'] = (
-        result[match_col].str.extract(r'(\d+)', expand=False).fillna('_NO_NUMBER_')
-    )
-    result = result[result['_source_numbers'] == result['_match_numbers']]
-    result = result.drop(columns=['_source_numbers', '_match_numbers'])
-    return result
+    """Keep only matches whose names carry compatible numbers (see
+    ``names.numbers_compatible``): both unnumbered, or both numbered with a
+    shared number, whether written 2, II, _2 or Two."""
+    keep = [numbers_compatible(a, b) for a, b in zip(df[source_col], df[match_col])]
+    return df[keep].copy()
 
 
 def fuzzy_match_1_to_1(
@@ -112,6 +108,7 @@ def fuzzy_match_1_to_1(
     id_col: str = 'id',
     match_col: str = 'name',
     ref_id_col: str = 'ref_id',
+    number_aware: bool = False,
 ) -> pd.DataFrame:
     """
     Perform one-to-one fuzzy matching using the Hungarian algorithm.
@@ -128,6 +125,9 @@ def fuzzy_match_1_to_1(
         id_col: Column name for the identifier in dataset_to_match.
         match_col: Column name for the text to match.
         ref_id_col: Column name for the reference identifier.
+        number_aware: When True, pairs whose numbers are incompatible are
+            excluded before assignment, so a target blocked from one numbered
+            sibling can still be assigned the right one in the same pass.
 
     Returns:
         DataFrame with columns: id, *group_columns, name,
@@ -201,11 +201,17 @@ def fuzzy_match_1_to_1(
 
         k = max(n, m)
 
+        allowed = (np.array([[numbers_compatible(s, r) for r in ref_names] for s in sites],
+                            dtype=bool).reshape(n, m)
+                   if number_aware else np.ones((n, m), dtype=bool))
+
         # --- Levenshtein cost matrix ---
+        # Blocked pairs cost the same as padding, so they are never preferred
+        # over leaving the target unassigned; any that still land are dropped.
         lev_costs = [[levenshtein(s, r) for r in ref_names] for s in sites]
         pad_lev = (max(max(row) for row in lev_costs) + 1) if lev_costs else 1
         cost_lev = np.full((k, k), pad_lev, dtype=int)
-        cost_lev[:n, :m] = lev_costs
+        cost_lev[:n, :m] = np.where(allowed, lev_costs, pad_lev)
         row_lev, col_lev = lsa(cost_lev)
 
         # --- Soundex cost matrix ---
@@ -217,12 +223,13 @@ def fuzzy_match_1_to_1(
         ]
         pad_sdx = (max(max(row) for row in sdx_costs) + 1) if sdx_costs else 1
         cost_sdx = np.full((k, k), pad_sdx, dtype=int)
-        cost_sdx[:n, :m] = sdx_costs
+        cost_sdx[:n, :m] = np.where(allowed, sdx_costs, pad_sdx)
         row_sdx, col_sdx = lsa(cost_sdx)
 
         # Assemble output rows
         for i, (id_val, site) in enumerate(zip(ids, sites)):
-            j_lev = next((c for r, c in zip(row_lev, col_lev) if r == i and c < m), None)
+            j_lev = next((c for r, c in zip(row_lev, col_lev)
+                          if r == i and c < m and allowed[i, c]), None)
             if j_lev is not None:
                 best_lev_name = ref_names[j_lev]
                 best_lev_dist = levenshtein(site, best_lev_name)
@@ -232,7 +239,8 @@ def fuzzy_match_1_to_1(
                 best_lev_dist = None
                 best_ref_id_lev = None
 
-            j_sdx = next((c for r, c in zip(row_sdx, col_sdx) if r == i and c < m), None)
+            j_sdx = next((c for r, c in zip(row_sdx, col_sdx)
+                          if r == i and c < m and allowed[i, c]), None)
             if j_sdx is not None:
                 best_sdx_name = ref_names[j_sdx]
                 best_sdx_dist = hamming_distance(site_sdx[i], ref_sdx[j_sdx])

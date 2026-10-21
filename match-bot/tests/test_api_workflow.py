@@ -126,7 +126,7 @@ def test_auto_match_link_pin_review(setup):
     d = c.post('/api/run', json={'threshold': 70, 'restrict': True}).get_json()
     assert d['ok'] and d['form']['ran']
     leaf = d['stats']['leaf']
-    # exact: Kola, Mira, Foo; fuzzy: Zed; suggest: Kolo 2->Kolo, Tavi->Tavy
+    # exact: Kola, Mira, Foo; fuzzy: Zed; suggest: Kolo 2->Kolo Village II, Tavi->Tavy
     assert leaf['linked'] == 6 and leaf['pending'] == 1
     assert len(d['histogram']) == 10
 

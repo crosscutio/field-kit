@@ -173,10 +173,31 @@ sequenceDiagram
 Each hierarchy level is the same loop: the engine's exact pass fills the level's
 lookup table; the GUI lists the target names still `no_candidate`, scores every
 unmatched reference name in the same parent group with rapidfuzz
-(`max(ratio, token_set_ratio)`, standalone digits stripped), and the person
+(`max(ratio, token_set_ratio)` over the name's words; numbers are a hard
+gate, see below), and the person
 links, rejects, or bulk-accepts. Because the engine applies the crosswalk
 before matching, re-running lookups after a level is settled unblocks the
 children, exactly as the CLI walkthrough in `projects/ICR Examples/CIV_example.md`.
+
+### Numbers in names
+
+`core/names.py` splits every name into its words and a set of numbers, and
+recognizes the ways sources write the same number: `Ofutop 2`, `OFUTOP_2`,
+`Ofutop2`, `Ofutop II`, `Ofutop Two`, `Ebedeng 11` (digits typed for II), and
+ranges such as `Esit Ikot 1&2`. Roman numerals and number words only count at
+the end of a name, so `Four Corner` keeps its words. Fuzzy scores for numbered
+names compare the words only, so a shared "2" can't make `Ward 2` look like
+`Zone 2`; unnumbered names are scored exactly as before (punctuation kept). The numbers
+are a hard gate wherever names are paired (suggestions, the engine's
+edit-distance passes, and inside the one-to-one assignment):
+
+- both unnumbered, or both numbered with a number in common: allowed;
+- different numbers (`Ofutop 1` / `Ofutop 2`): never paired;
+- only one side numbered (`Old Netim I` / `Old Netim`): never paired.
+
+With `validate_numbers` on, the engine also rewrites numbered leaf names to one
+spelling (`ofutop 2`) before its exact and edit-distance passes; `name_raw`
+keeps the original.
 
 ### Where the admin units come from
 

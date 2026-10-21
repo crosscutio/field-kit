@@ -12,9 +12,11 @@ def leaf(config):
     return pd.read_csv(config.lookups_dir / 'leaf_lookup.csv', dtype=str).fillna('')
 
 
-def test_score_pair_strips_standalone_digits():
-    assert sg.score_pair('Ward 2', 'Zone 2') < 60
-    assert sg.score_pair('Gagnoa 1', 'Gagnoa') == 100
+def test_score_pair_numbers_gate_but_dont_score():
+    assert sg.score_pair('Ward 2', 'Zone 2') < 60       # shared number adds nothing
+    assert sg.score_pair('Gagnoa 1', 'Gagnoa 2') == 0   # siblings never pair
+    assert sg.score_pair('Gagnoa 1', 'Gagnoa') == 0     # one-sided number rejected
+    assert sg.score_pair('Gagnoa 2', 'GAGNOA_II') == 100
 
 
 def test_hierarchy_suggest_then_apply_unblocks_children(project_with_lookups):
@@ -45,8 +47,9 @@ def test_leaf_suggest_is_scoped_and_one_to_one(project_with_lookups):
     cfg = project_with_lookups
     out = sg.suggest(cfg, 'leaf', threshold=60)
     pairs = {(s['target_id'], s['ref_id']) for s in out}
-    # Kolo 2 -> Kolo within Alpha (digits stripped). Zed already fuzzy-matched
-    # Zedd in the lookups pass. Tavi cannot match Tavy (Gama != Gamma yet).
+    # Kolo 2 -> Kolo Village II within Alpha (same number, base words subset).
+    # Zed already fuzzy-matched Zedd in the lookups pass. Tavi cannot match
+    # Tavy (Gama != Gamma yet).
     assert ('T2', 'R2') in pairs
     assert not any(t in ('T3', 'T5') for t, _ in pairs)
     # Kola (T1) exact-matched R1, so R9 (Kola, Ouest) is not proposed for it
@@ -76,7 +79,7 @@ def test_best_scores_for_histogram(project_with_lookups):
     cfg = project_with_lookups
     scores = sg.best_scores(cfg, 'leaf', restrict=True)
     assert set(scores) == {'T2', 'T5', 'T6', 'T7'}
-    assert scores['T2'] == 100         # Kolo 2 vs Kolo
+    assert scores['T2'] == 100         # Kolo 2 vs Kolo Village II
     assert scores['T5'] == 0           # no candidate in its parent group
 
 

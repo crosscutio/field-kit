@@ -20,6 +20,7 @@ from .fuzzy import (
     validate_number_match,
 )
 from .lookup import get_hierarchy_mappings, get_manual_matches, load_lookup
+from .names import canonical
 from .standardization import apply_name_mappings, normalize_series, remove_accents
 
 
@@ -152,6 +153,11 @@ class MatchingPipeline:
                     lambda x: remove_accents(str(x)) if pd.notna(x) else x
                 )
             result[col] = normalize_series(result[col], case=case, remove_accent=False)
+
+        # One spelling per number ("Ofutop_2", "Ofutop II" -> "ofutop 2") so the
+        # exact and edit-distance steps compare like with like.
+        if cfg.matching.validate_numbers:
+            result['name'] = result['name'].apply(lambda x: canonical(x) if pd.notna(x) else x)
 
         return result
 
@@ -326,6 +332,7 @@ class MatchingPipeline:
                 ref_pool, target_pool,
                 group_columns=group_cols if group_cols else None,
                 id_col='id', match_col='name', ref_id_col='id',
+                number_aware=mcfg.validate_numbers,
             )
 
             if not fuzzy.empty and 'levenshtein_distance' in fuzzy.columns:
@@ -357,11 +364,14 @@ class MatchingPipeline:
                 ref_pool, target_pool,
                 group_columns=group_cols if group_cols else None,
                 id_col='id', match_col='name', ref_id_col='id',
+                number_aware=mcfg.validate_numbers,
             )
 
             if not fuzzy.empty and 'levenshtein_distance' in fuzzy.columns:
                 fuzzy['lev_score'] = fuzzy['levenshtein_distance'] / fuzzy['name'].str.len()
                 new_matches = fuzzy[fuzzy['lev_score'] < score_threshold].copy()
+                if mcfg.validate_numbers and len(new_matches) > 0:
+                    new_matches = validate_number_match(new_matches, source_col='name')
 
                 if len(new_matches) > 0:
                     fuzzy_rows = self._collect_fuzzy_matches(

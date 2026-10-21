@@ -3,7 +3,8 @@
 Target (communities, need coordinates) vs reference (places, have lat/lon).
 Regions: target "Centr" is a typo of reference "Centre"; districts: target
 "Gama" is a typo of "Gamma". Leaf names carry one exact match, fuzzy
-near-misses, and a number-only difference.
+near-misses, and a numbered name whose reference writes the number differently and
+adds a word ("Kolo 2" vs "Kolo Village II").
 """
 import contextlib
 import io
@@ -27,7 +28,7 @@ TARGET_ROWS = [
 REF_ROWS = [
     # id, name, region, district, lat, lon
     ('R1', 'Kola', 'Nord', 'Alpha', 1.0, 10.0),
-    ('R2', 'Kolo', 'Nord', 'Alpha', 1.1, 10.1),
+    ('R2', 'Kolo Village II', 'Nord', 'Alpha', 1.1, 10.1),
     ('R3', 'Zedd', 'Nord', 'Alpha', 1.2, 10.2),
     ('R4', 'Mira', 'Nord', 'Beta', 2.0, 11.0),
     ('R5', 'Mirra', 'Nord', 'Beta', 2.1, 11.1),

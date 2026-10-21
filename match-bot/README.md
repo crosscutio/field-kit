@@ -127,7 +127,7 @@ standardization:
 matching:
   levenshtein_distance_threshold: 1
   levenshtein_score_threshold: 0.25
-  validate_numbers: true
+  validate_numbers: true    # numbers in names must agree (2 = II = _2 = Two); see ARCHITECTURE.md
 
 paths:
   lookups_dir: output/lookups
