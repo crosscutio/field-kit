@@ -1235,7 +1235,7 @@
     undo: async () => { const d = await api('/api/undo', { json: {} }); if (d) { toast('Undone: ' + d.undone); await refreshStage(); } },
     log: async () => { const d = await api('/api/history'); if (d) { S.log = d.entries; S.logOpen = true; renderDrawer(); } },
     'log-close': () => { S.logOpen = false; renderDrawer(); },
-    reset: async () => { if (!confirm('Start a new project? Uploaded files, links and history for this session are deleted.')) return; const d = await api('/api/reset', { json: {} }); if (d) { S.stage = 1; S.sub = 1; S.level = null; S.lvl = null; S.hist = null; S.comm = { rows: [], all: false, sel: null, cands: [], candSel: 0, pin: null, query: '', places: [], open: new Set(), revealed: null }; S.review.rows = []; S.gaz.open = false; S.src = null; S.fhir.open = false; S.fhir.connected = false; S.fhir.server = null; S.fhir.log = []; S.icr.requery = false; S.icr.connected = false; S.icr.check = null; S.icr.log = []; render(); } },
+    reset: async () => { if (!confirm('Start a new project? Uploaded files, links and history for this session are deleted.')) return; const d = await api('/api/reset', { json: {} }); if (d) location.reload(); },  // a fresh page: no screen, cache or map layer keeps the old project
   };
   async function undoDecision(level, key) {
     // "no equivalent" has no direct clear endpoint; go through undo if it was the last action, else re-link path via unlink is not applicable.
